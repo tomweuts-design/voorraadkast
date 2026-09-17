@@ -142,6 +142,15 @@
   .winkel-manage-row button{
     background:none; border:none; color:var(--berry); font-size:.8rem; cursor:pointer;
   }
+  .item-thumb{
+    width:46px; height:46px; border-radius:8px; object-fit:cover; flex-shrink:0;
+    background:var(--line); border:1px solid var(--line);
+  }
+  .item-row-main{ display:flex; gap:10px; align-items:flex-start; }
+  .foto-preview{
+    width:80px; height:80px; border-radius:10px; object-fit:cover; margin-top:8px;
+    border:1px solid var(--line); display:block;
+  }
 </style>
 </head>
 <body>
@@ -255,10 +264,13 @@ function renderVoorraad(){
     return `
     <div class="card">
       <div class="item-row">
-        <div>
-          <div class="item-name">${i.naam}</div>
-          <div class="item-meta">${i.barcode || 'geen barcode'}</div>
-          <span class="winkel-tag">${winkelNaam(i.winkel_id)}</span>
+        <div class="item-row-main">
+          <img class="item-thumb" src="${i.foto_url || ''}" onerror="this.style.visibility='hidden'" alt="">
+          <div>
+            <div class="item-name">${i.naam}</div>
+            <div class="item-meta">${i.barcode || 'geen barcode'}</div>
+            <span class="winkel-tag">${winkelNaam(i.winkel_id)}</span>
+          </div>
         </div>
         <div class="qty ${low ? 'low' : ''}">${i.hoeveelheid}</div>
       </div>
@@ -266,7 +278,8 @@ function renderVoorraad(){
       <div class="item-actions">
         <button onclick="verbruikItem('${i.id}')">− verbruik 1</button>
         <button onclick="vulAanItem('${i.id}')">+ vul aan</button>
-        <button onclick="markeerBijnaOp('${i.id}')">markeer bijna op</button>
+        <button onclick="markeerBijnaOp('${i.id}')">bijna op</button>
+        <button onclick="openBewerkModal('${i.id}')">bewerken</button>
       </div>
     </div>`;
   }).join('');
@@ -384,16 +397,65 @@ async function haalVanLijst(id){
   await laadLijst();
 }
 
+// ---------- bewerken (naam, minimum, foto) ----------
+function openBewerkModal(id){
+  const item = items.find(i => i.id === id);
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <button class="modal-close" onclick="closeModal()">×</button>
+        <h2>Product bewerken</h2>
+        <label>Naam</label>
+        <input id="bewerkNaam" value="${item.naam}">
+        <label>Minimum voorraad</label>
+        <input id="bewerkMin" type="number" value="${item.min_voorraad}">
+        <label>Foto</label>
+        ${item.foto_url ? `<img class="foto-preview" src="${item.foto_url}">` : ''}
+        <input id="bewerkFoto" type="file" accept="image/*" capture="environment" style="margin-top:8px;">
+        <button class="btn-primary" onclick="bewaarBewerking('${id}')">Opslaan</button>
+      </div>
+    </div>
+  `;
+}
+
+async function bewaarBewerking(id){
+  const naam = document.getElementById('bewerkNaam').value.trim();
+  const min = parseFloat(document.getElementById('bewerkMin').value);
+  const fotoInput = document.getElementById('bewerkFoto');
+  if(!naam){ toast('Vul een naam in'); return; }
+
+  const updates = { naam, min_voorraad: isNaN(min) ? 1 : min };
+
+  if(fotoInput.files && fotoInput.files[0]){
+    const file = fotoInput.files[0];
+    const pad = `${id}-${Date.now()}.${file.name.split('.').pop()}`;
+    const { error: uploadError } = await sb.storage.from('productfotos').upload(pad, file, { upsert: true });
+    if(uploadError){ toast('Foto uploaden mislukt'); console.error(uploadError); return; }
+    const { data: urlData } = sb.storage.from('productfotos').getPublicUrl(pad);
+    updates.foto_url = urlData.publicUrl;
+  }
+
+  const { error } = await sb.from('items').update(updates).eq('id', id);
+  if(error){ toast('Kon niet opslaan'); console.error(error); return; }
+  closeModal();
+  await laadItems();
+  toast('Opgeslagen');
+}
+
 // ---------- barcode opzoeken bij Open Food Facts ----------
-async function zoekProductnaam(barcode){
+async function zoekProductInfo(barcode){
   try{
     const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${barcode}.json`);
     const data = await res.json();
     if(data.status === 1){
-      return data.product.product_name || data.product.product_name_nl || '';
+      return {
+        naam: data.product.product_name || data.product.product_name_nl || '',
+        foto: data.product.image_front_url || data.product.image_url || ''
+      };
     }
   }catch(e){ console.warn('Open Food Facts opzoeken mislukt', e); }
-  return '';
+  return { naam: '', foto: '' };
 }
 
 // ---------- scan modal ----------
@@ -476,18 +538,20 @@ async function onScanSuccess(decodedText){
       await laadItems();
     }
   } else {
-    const gevondenNaam = await zoekProductnaam(decodedText);
+    const info = await zoekProductInfo(decodedText);
     resultArea.innerHTML = `
       <div class="scan-result">
         <div class="item-meta">onbekende barcode: ${decodedText}</div>
+        ${info.foto ? `<img class="foto-preview" src="${info.foto}">` : ''}
         <label>Productnaam</label>
-        <input id="nieuwProductNaam" value="${gevondenNaam}">
+        <input id="nieuwProductNaam" value="${info.naam}">
         <label>Startvoorraad</label>
         <input id="nieuwProductHoeveelheid" type="number" value="1">
         <label>Minimum voorraad</label>
         <input id="nieuwProductMin" type="number" value="1">
         <label>Prijs bij ${winkelNaam(winkelId)}</label>
         <input id="nieuwProductPrijs" type="number" step="0.01" placeholder="bv. 2.49">
+        <input type="hidden" id="nieuwProductFoto" value="${info.foto}">
         <button class="btn-primary" onclick="maakNieuwProduct('${decodedText}','${winkelId}')">Product toevoegen</button>
       </div>`;
   }
@@ -506,8 +570,9 @@ async function maakNieuwProduct(barcode, winkelId){
   const hoeveelheid = parseFloat(document.getElementById('nieuwProductHoeveelheid').value) || 0;
   const min = parseFloat(document.getElementById('nieuwProductMin').value) || 1;
   const prijs = document.getElementById('nieuwProductPrijs').value;
+  const foto_url = document.getElementById('nieuwProductFoto').value || null;
   const { data, error } = await sb.from('items').insert({
-    barcode, naam, hoeveelheid, min_voorraad: min, winkel_id: winkelId
+    barcode, naam, hoeveelheid, min_voorraad: min, winkel_id: winkelId, foto_url
   }).select().single();
   if(error){ toast('Kon product niet aanmaken'); console.error(error); return; }
   await voegOfWerkPrijsBij(data.id, winkelId, prijs);
