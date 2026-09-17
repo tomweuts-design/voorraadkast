@@ -151,13 +151,32 @@
     width:80px; height:80px; border-radius:10px; object-fit:cover; margin-top:8px;
     border:1px solid var(--line); display:block;
   }
+  header{ position:sticky; top:0; background:var(--bg); z-index:10; }
+  .about-btn{
+    position:absolute; top:20px; right:18px;
+    width:34px; height:34px; border-radius:999px;
+    background:none; border:1px solid var(--line); color:var(--text-dim);
+    font-size:1rem; cursor:pointer;
+  }
+  .about-menu-btn{
+    display:block; width:100%; text-align:left; margin:0 0 8px;
+    padding:13px 14px; border-radius:8px; border:1px solid var(--line);
+    background:var(--bg-panel); color:var(--text); font-size:.92rem; cursor:pointer;
+  }
+  .about-text p{ font-size:.88rem; line-height:1.5; color:var(--text); margin:0 0 12px; }
+  .about-text strong{ color:var(--paper); }
+  .version-box{
+    background:var(--bg-panel); border:1px solid var(--line); border-radius:10px;
+    padding:14px; margin-top:12px; font-size:.88rem;
+  }
 </style>
 </head>
 <body>
 
 <header>
+  <button class="about-btn" onclick="openAboutModal()">ℹ️</button>
   <h1>Voorraadkast</h1>
-  <div class="sub">wat er in huis is, en waar het vandaan komt created by Tom Weuts -version 0.01-</div>
+  <div class="sub">wat er in huis is, en waar het vandaan komt created by tom weuts -version 0.2-</div>
   <nav class="tabs">
     <button data-tab="voorraad" class="active">Voorraad</button>
     <button data-tab="lijst">Boodschappen</button>
@@ -204,6 +223,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_IjmnfdHK8CyJ8i2-KQZ2HA_BDHRFWw5";
 // ====================================================================
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const APP_VERSION = "1.1.0";
 
 let winkels = [];
 let items = [];
@@ -630,6 +650,78 @@ document.querySelectorAll('nav.tabs button').forEach(btn => {
 });
 document.getElementById('filterWinkel').addEventListener('change', renderVoorraad);
 document.getElementById('lijstWinkel').addEventListener('change', laadLijst);
+
+// ---------- over deze app ----------
+function openAboutModal(){ renderAboutMenu(); }
+
+function aboutSkelet(titel, inhoudHtml){
+  return `
+    <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <button class="modal-close" onclick="closeModal()">×</button>
+        <h2>${titel}</h2>
+        ${inhoudHtml}
+      </div>
+    </div>`;
+}
+
+function renderAboutMenu(){
+  document.getElementById('modalRoot').innerHTML = aboutSkelet('Over deze app', `
+    <button class="about-menu-btn" onclick="toonHandleiding()">📖 Handleiding</button>
+    <button class="about-menu-btn" onclick="toonToekomst()">🔭 Toekomstperspectief</button>
+    <button class="about-menu-btn" onclick="toonUpdateCheck()">🔄 Update controleren</button>
+    <div class="item-meta" style="margin-top:8px;">huidige versie: ${APP_VERSION}</div>
+  `);
+}
+
+function toonHandleiding(){
+  document.getElementById('modalRoot').innerHTML = aboutSkelet('Handleiding', `
+    <div class="about-text">
+      <p><strong>Voorraad</strong> toont alles wat in huis is, filterbaar per winkel. Elke kaart toont de hoeveelheid en de laatst gekende prijs, met drie knoppen: <em>verbruik 1</em> (−1), <em>vul aan</em> (erbij + prijs invullen), en <em>bijna op</em> (resterende hoeveelheid ingeven en meteen op het boodschappenlijstje zetten).</p>
+      <p><strong>Scannen</strong> opent de camera via de knop onderaan. Kies eerst de winkel en de modus: <em>Aanvullen</em> als je iets in huis haalt, <em>Verbruiken</em> als je iets opgebruikt. Bij een onbekende barcode krijg je een formulier, met naam en foto automatisch voorgesteld indien gekend bij Open Food Facts.</p>
+      <p><strong>Boodschappen</strong> toont wat aangevuld moet worden, filterbaar per winkel. Producten komen hier automatisch op via "bijna op" of wanneer verbruiken de voorraad onder het minimum brengt.</p>
+      <p><strong>Winkels</strong> beheert de lijst van winkels waar je boodschappen doet.</p>
+      <p><strong>Bewerken</strong> (knop op elke kaart) past naam, minimum voorraad, aankoopprijs en foto aan.</p>
+    </div>
+    <button class="btn-secondary" onclick="renderAboutMenu()">← Terug</button>
+  `);
+}
+
+function toonToekomst(){
+  document.getElementById('modalRoot').innerHTML = aboutSkelet('Toekomstperspectief', `
+    <div class="about-text">
+      <p>Deze app is bewust in stappen opgebouwd. Wat er (nog) aan kan komen:</p>
+      <p><strong>Home Assistant</strong> — de app laten triggeren door een fysieke/HA-barcodescanner, met een dashboard-kaart die voorraad toont en meldingen geeft bij lage voorraad.</p>
+      <p><strong>Prijsvergelijking</strong> — per product zien of het bij een andere winkel goedkoper is, met een knop om het naar dat winkellijstje te verplaatsen.</p>
+      <p><strong>Promoties</strong> — actieve kortingen per winkel bijhouden naast de gewone prijs.</p>
+      <p><strong>Kassabon-verwerking</strong> — een kassaticket (foto of mail-PDF) automatisch laten uitlezen om prijzen bij te werken.</p>
+      <p><strong>Geolocatie</strong> — via een Home Assistant-zone bij aankomst in een winkel automatisch de bijhorende boodschappenlijst tonen, met suggesties om producten naar een goedkopere winkel te verplaatsen.</p>
+    </div>
+    <button class="btn-secondary" onclick="renderAboutMenu()">← Terug</button>
+  `);
+}
+
+async function toonUpdateCheck(){
+  document.getElementById('modalRoot').innerHTML = aboutSkelet('Update controleren', `
+    <div class="version-box">Bezig met controleren...</div>
+    <button class="btn-secondary" onclick="renderAboutMenu()">← Terug</button>
+  `);
+  const { data, error } = await sb.from('app_info').select('*').eq('id', 1).single();
+  const box = document.querySelector('.version-box');
+  if(error || !data){
+    box.innerHTML = `Kon niet controleren (nog geen <span class="mono">app_info</span>-tabel ingesteld).`;
+    return;
+  }
+  if(data.laatste_versie === APP_VERSION){
+    box.innerHTML = `Je gebruikt de laatste versie (${APP_VERSION}).`;
+  } else {
+    box.innerHTML = `
+      <strong style="color:var(--mustard)">Update beschikbaar: ${data.laatste_versie}</strong> (jij hebt ${APP_VERSION})
+      ${data.wijzigingen ? `<p style="margin-top:8px;">${data.wijzigingen}</p>` : ''}
+      ${data.update_procedure ? `<p style="margin-top:8px; color:var(--text-dim);">${data.update_procedure}</p>` : ''}
+    `;
+  }
+}
 
 // ---------- init ----------
 (async function init(){
