@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voorraadkast</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  :root{
+    --bg: #16211c;
+    --bg-panel: #1c2a22;
+    --paper: #f2ecdd;
+    --paper-dim: #e5ddc8;
+    --mustard: #d9a63e;
+    --sage: #8fa382;
+    --berry: #b4483a;
+    --text: #ece7d8;
+    --text-dim: #93a191;
+    --line: #2c3b31;
+    --radius: 10px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:'IBM Plex Sans', sans-serif;
+    min-height:100vh;
+    padding-bottom:90px;
+  }
+  h1,h2,h3{ font-family:'Fraunces', serif; font-weight:600; margin:0; }
+  .mono{ font-family:'IBM Plex Mono', monospace; }
+
+  header{
+    padding:20px 18px 14px;
+    border-bottom:1px solid var(--line);
+    position:sticky; top:0; background:var(--bg); z-index:10;
+  }
+  header h1{ font-size:1.6rem; color:var(--paper); letter-spacing:.2px; }
+  header .sub{ color:var(--text-dim); font-size:.85rem; margin-top:2px; }
+
+  nav.tabs{
+    display:flex; gap:4px; margin-top:16px;
+    border-bottom:1px solid var(--line);
+  }
+  nav.tabs button{
+    background:none; border:none; color:var(--text-dim);
+    font-family:'IBM Plex Sans'; font-size:.9rem; font-weight:500;
+    padding:10px 4px; margin-right:18px; cursor:pointer;
+    border-bottom:2px solid transparent;
+  }
+  nav.tabs button.active{ color:var(--paper); border-bottom-color:var(--mustard); }
+
+  main{ padding:16px 18px 8px; max-width:640px; margin:0 auto; }
+
+  select, input{
+    background:var(--bg-panel); border:1px solid var(--line); color:var(--text);
+    border-radius:8px; padding:9px 10px; font-family:'IBM Plex Sans'; font-size:.92rem;
+    width:100%;
+  }
+  label{ font-size:.78rem; color:var(--text-dim); display:block; margin:10px 0 4px; }
+
+  .winkel-filter{ margin-bottom:14px; }
+
+  .card{
+    background:var(--bg-panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:13px 14px; margin-bottom:10px;
+  }
+  .item-row{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  .item-name{ font-weight:500; font-size:.98rem; }
+  .item-meta{ color:var(--text-dim); font-size:.78rem; margin-top:2px; }
+  .qty{ font-family:'IBM Plex Mono'; font-size:1.15rem; text-align:right; min-width:52px; }
+  .qty.low{ color:var(--berry); }
+  .stock-bar{ height:4px; border-radius:2px; background:var(--line); margin-top:8px; overflow:hidden; }
+  .stock-bar > div{ height:100%; background:var(--sage); }
+  .stock-bar.low > div{ background:var(--berry); }
+  .item-actions{ display:flex; gap:8px; margin-top:10px; }
+  .item-actions button{
+    flex:1; padding:7px; font-size:.78rem; border-radius:7px; border:1px solid var(--line);
+    background:none; color:var(--text-dim); cursor:pointer;
+  }
+  .item-actions button:active{ background:var(--line); }
+
+  .empty{ color:var(--text-dim); text-align:center; padding:40px 10px; font-size:.9rem; }
+
+  .fab{
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+    background:var(--mustard); color:#1a1305; border:none; border-radius:999px;
+    padding:14px 26px; font-family:'IBM Plex Sans'; font-weight:600; font-size:.95rem;
+    display:flex; align-items:center; gap:8px; cursor:pointer;
+    box-shadow:0 6px 18px rgba(0,0,0,.35);
+  }
+
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(10,14,11,.75);
+    display:flex; align-items:flex-end; justify-content:center; z-index:100;
+  }
+  .modal{
+    background:var(--bg); border:1px solid var(--line); border-radius:16px 16px 0 0;
+    width:100%; max-width:480px; padding:20px 18px 26px; max-height:88vh; overflow-y:auto;
+  }
+  .modal h2{ font-size:1.2rem; color:var(--paper); margin-bottom:4px; }
+  .modal-close{ float:right; background:none; border:none; color:var(--text-dim); font-size:1.3rem; cursor:pointer; }
+
+  .mode-toggle{ display:flex; gap:8px; margin:14px 0; }
+  .mode-toggle button{
+    flex:1; padding:10px; border-radius:8px; border:1px solid var(--line);
+    background:var(--bg-panel); color:var(--text-dim); font-weight:500; cursor:pointer;
+  }
+  .mode-toggle button.active{ border-color:var(--mustard); color:var(--mustard); background:#2a2210; }
+
+  #reader{ border-radius:10px; overflow:hidden; margin-top:12px; }
+
+  .btn-primary{
+    width:100%; margin-top:16px; padding:12px; border:none; border-radius:8px;
+    background:var(--sage); color:#0f1a12; font-weight:600; font-size:.95rem; cursor:pointer;
+  }
+  .btn-secondary{
+    width:100%; margin-top:8px; padding:11px; border:1px solid var(--line); border-radius:8px;
+    background:none; color:var(--text-dim); font-size:.88rem; cursor:pointer;
+  }
+  .scan-result{
+    background:var(--bg-panel); border:1px solid var(--line); border-radius:10px;
+    padding:12px; margin-top:12px;
+  }
+  .toast{
+    position:fixed; top:14px; left:50%; transform:translateX(-50%);
+    background:var(--paper); color:#1a1305; padding:10px 18px; border-radius:999px;
+    font-size:.85rem; font-weight:500; z-index:200; box-shadow:0 4px 14px rgba(0,0,0,.3);
+  }
+  .winkel-tag{
+    display:inline-block; font-size:.72rem; color:var(--mustard); border:1px solid var(--mustard);
+    border-radius:999px; padding:1px 8px; margin-top:6px;
+  }
+  ul.plain{ list-style:none; padding:0; margin:0; }
+  .winkel-manage-row{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 0; border-bottom:1px solid var(--line);
+  }
+  .winkel-manage-row button{
+    background:none; border:none; color:var(--berry); font-size:.8rem; cursor:pointer;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Voorraadkast</h1>
+  <div class="sub">wat er in huis is, en waar het vandaan komt</div>
+  <nav class="tabs">
+    <button data-tab="voorraad" class="active">Voorraad</button>
+    <button data-tab="lijst">Boodschappen</button>
+    <button data-tab="winkels">Winkels</button>
+  </nav>
+</header>
+
+<main>
+
+  <div id="tab-voorraad">
+    <div class="winkel-filter">
+      <select id="filterWinkel"><option value="">Alle winkels</option></select>
+    </div>
+    <div id="voorraadList"></div>
+  </div>
+
+  <div id="tab-lijst" style="display:none">
+    <div class="winkel-filter">
+      <select id="lijstWinkel"><option value="">Alle winkels</option></select>
+    </div>
+    <div id="lijstList"></div>
+  </div>
+
+  <div id="tab-winkels" style="display:none">
+    <label>Nieuwe winkel</label>
+    <div style="display:flex; gap:8px;">
+      <input id="nieuweWinkelNaam" placeholder="bv. Aldi">
+      <button class="btn-secondary" style="width:auto; margin:0; padding:9px 16px;" onclick="voegWinkelToe()">Toevoegen</button>
+    </div>
+    <ul class="plain" id="winkelsBeheerList" style="margin-top:18px;"></ul>
+  </div>
+
+</main>
+
+<button class="fab" onclick="openScanModal()">📷 Scannen</button>
+
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+
+<script>
+// ====== CONFIGURATIE — vul hier je eigen Supabase-project in ======
+const SUPABASE_URL = "https://msxrzbkdeajugofrqodn.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_IjmnfdHK8CyJ8i2-KQZ2HA_BDHRFWw5";
+// ====================================================================
+
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let winkels = [];
+let items = [];
+let html5QrCode = null;
+let scanMode = "aanvullen"; // of "verbruiken"
+
+// ---------- helpers ----------
+function toast(msg){
+  const root = document.getElementById('toastRoot');
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = msg;
+  root.appendChild(el);
+  setTimeout(()=> el.remove(), 2200);
+}
+function winkelNaam(id){
+  const w = winkels.find(w => w.id === id);
+  return w ? w.naam : '—';
+}
+function closeModal(){ document.getElementById('modalRoot').innerHTML = ''; }
+
+// ---------- data laden ----------
+async function laadWinkels(){
+  const { data, error } = await sb.from('winkels').select('*').order('naam');
+  if(error){ console.error(error); return; }
+  winkels = data || [];
+  const opts = w => `<option value="${w.id}">${w.naam}</option>`;
+  document.getElementById('filterWinkel').innerHTML = '<option value="">Alle winkels</option>' + winkels.map(opts).join('');
+  document.getElementById('lijstWinkel').innerHTML = '<option value="">Alle winkels</option>' + winkels.map(opts).join('');
+  renderWinkelsBeheer();
+}
+
+async function laadItems(){
+  const { data, error } = await sb.from('items').select('*').order('naam');
+  if(error){ console.error(error); return; }
+  items = data || [];
+  renderVoorraad();
+}
+
+async function laadLijst(){
+  const filter = document.getElementById('lijstWinkel').value;
+  let q = sb.from('boodschappenlijst').select('*, items(naam), winkels(naam)').order('toegevoegd_op');
+  if(filter) q = q.eq('winkel_id', filter);
+  const { data, error } = await q;
+  if(error){ console.error(error); return; }
+  renderLijst(data || []);
+}
+
+// ---------- render: voorraad ----------
+function renderVoorraad(){
+  const filter = document.getElementById('filterWinkel').value;
+  const lijst = items.filter(i => !filter || i.winkel_id === filter);
+  const el = document.getElementById('voorraadList');
+  if(lijst.length === 0){ el.innerHTML = '<div class="empty">Nog geen producten. Scan er een om te beginnen.</div>'; return; }
+  el.innerHTML = lijst.map(i => {
+    const low = i.hoeveelheid <= i.min_voorraad;
+    const pct = Math.min(100, i.min_voorraad > 0 ? (i.hoeveelheid / (i.min_voorraad * 2)) * 100 : 100);
+    return `
+    <div class="card">
+      <div class="item-row">
+        <div>
+          <div class="item-name">${i.naam}</div>
+          <div class="item-meta">${i.barcode || 'geen barcode'}</div>
+          <span class="winkel-tag">${winkelNaam(i.winkel_id)}</span>
+        </div>
+        <div class="qty ${low ? 'low' : ''}">${i.hoeveelheid}</div>
+      </div>
+      <div class="stock-bar ${low ? 'low' : ''}"><div style="width:${pct}%"></div></div>
+      <div class="item-actions">
+        <button onclick="verbruikItem('${i.id}')">− verbruik 1</button>
+        <button onclick="vulAanItem('${i.id}')">+ vul aan</button>
+        <button onclick="markeerBijnaOp('${i.id}')">markeer bijna op</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ---------- render: boodschappenlijst ----------
+function renderLijst(rijen){
+  const el = document.getElementById('lijstList');
+  if(rijen.length === 0){ el.innerHTML = '<div class="empty">Niets op het lijstje.</div>'; return; }
+  el.innerHTML = rijen.map(r => `
+    <div class="card">
+      <div class="item-row">
+        <div>
+          <div class="item-name">${r.items?.naam || '—'}</div>
+          <span class="winkel-tag">${r.winkels?.naam || '—'}</span>
+        </div>
+        <button onclick="haalVanLijst('${r.id}')" style="background:none;border:1px solid var(--line);color:var(--text-dim);border-radius:7px;padding:8px 12px;cursor:pointer;">gekocht</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ---------- render: winkels beheer ----------
+function renderWinkelsBeheer(){
+  const el = document.getElementById('winkelsBeheerList');
+  if(winkels.length === 0){ el.innerHTML = '<div class="empty">Nog geen winkels.</div>'; return; }
+  el.innerHTML = winkels.map(w => `
+    <li class="winkel-manage-row">
+      <span>${w.naam}</span>
+      <button onclick="verwijderWinkel('${w.id}')">verwijderen</button>
+    </li>
+  `).join('');
+}
+
+// ---------- acties: winkels ----------
+async function voegWinkelToe(){
+  const naam = document.getElementById('nieuweWinkelNaam').value.trim();
+  if(!naam) return;
+  const { error } = await sb.from('winkels').insert({ naam });
+  if(error){ toast('Kon winkel niet toevoegen'); console.error(error); return; }
+  document.getElementById('nieuweWinkelNaam').value = '';
+  await laadWinkels();
+  toast('Winkel toegevoegd');
+}
+async function verwijderWinkel(id){
+  if(!confirm('Winkel verwijderen?')) return;
+  const { error } = await sb.from('winkels').delete().eq('id', id);
+  if(error){ toast('Kon niet verwijderen (mogelijk nog gekoppelde producten)'); return; }
+  await laadWinkels();
+}
+
+// ---------- acties: items ----------
+async function voegOfWerkPrijsBij(itemId, winkelId, prijs){
+  if(prijs === null || prijs === '' || isNaN(prijs)) return;
+  await sb.from('prijzen').insert({ item_id: itemId, winkel_id: winkelId, prijs: parseFloat(prijs) });
+}
+
+async function checkLageVoorraad(item){
+  if(item.hoeveelheid <= item.min_voorraad && item.winkel_id){
+    await sb.from('boodschappenlijst').upsert(
+      { item_id: item.id, winkel_id: item.winkel_id },
+      { onConflict: 'item_id,winkel_id' }
+    );
+  }
+}
+
+async function verbruikItem(id){
+  const item = items.find(i => i.id === id);
+  const nieuw = Math.max(0, item.hoeveelheid - 1);
+  const { data, error } = await sb.from('items').update({ hoeveelheid: nieuw }).eq('id', id).select().single();
+  if(error){ toast('Fout bij bijwerken'); return; }
+  await checkLageVoorraad(data);
+  await laadItems();
+}
+
+async function vulAanItem(id){
+  const item = items.find(i => i.id === id);
+  const aantal = prompt(`Met hoeveel wil je "${item.naam}" aanvullen?`, '1');
+  if(aantal === null || isNaN(aantal)) return;
+  const nieuw = item.hoeveelheid + parseFloat(aantal);
+  const { error } = await sb.from('items').update({ hoeveelheid: nieuw }).eq('id', id);
+  if(error){ toast('Fout bij bijwerken'); return; }
+  if(item.winkel_id){
+    const prijs = prompt(`Prijs bij "${winkelNaam(item.winkel_id)}"? (leeg = overslaan)`, '');
+    await voegOfWerkPrijsBij(id, item.winkel_id, prijs);
+  }
+  await laadItems();
+  toast('Voorraad aangevuld');
+}
+
+async function markeerBijnaOp(id){
+  const item = items.find(i => i.id === id);
+  await checkLageVoorraad(item);
+  toast(`Toegevoegd aan lijstje voor ${winkelNaam(item.winkel_id)}`);
+  await laadLijst();
+}
+
+async function haalVanLijst(id){
+  await sb.from('boodschappenlijst').delete().eq('id', id);
+  await laadLijst();
+}
+
+// ---------- barcode opzoeken bij Open Food Facts ----------
+async function zoekProductnaam(barcode){
+  try{
+    const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${barcode}.json`);
+    const data = await res.json();
+    if(data.status === 1){
+      return data.product.product_name || data.product.product_name_nl || '';
+    }
+  }catch(e){ console.warn('Open Food Facts opzoeken mislukt', e); }
+  return '';
+}
+
+// ---------- scan modal ----------
+function openScanModal(){
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this) sluitScanModal()">
+      <div class="modal">
+        <button class="modal-close" onclick="sluitScanModal()">×</button>
+        <h2>Scannen</h2>
+        <div class="mode-toggle">
+          <button id="modeAanvullen" class="active" onclick="setScanMode('aanvullen')">Aanvullen</button>
+          <button id="modeVerbruiken" onclick="setScanMode('verbruiken')">Verbruiken</button>
+        </div>
+        <label>Winkel (voor deze scan-sessie)</label>
+        <select id="scanWinkel">${winkels.map(w=>`<option value="${w.id}">${w.naam}</option>`).join('')}</select>
+        <div id="reader"></div>
+        <div id="scanResultArea"></div>
+        <button class="btn-secondary" onclick="sluitScanModal()">Sluiten</button>
+      </div>
+    </div>
+  `;
+  scanMode = "aanvullen";
+  html5QrCode = new Html5Qrcode("reader");
+  html5QrCode.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: 220 },
+    onScanSuccess,
+    () => {}
+  ).catch(err => {
+    document.getElementById('reader').innerHTML = `<div class="empty">Camera niet beschikbaar: ${err}</div>`;
+  });
+}
+function setScanMode(mode){
+  scanMode = mode;
+  document.getElementById('modeAanvullen').classList.toggle('active', mode === 'aanvullen');
+  document.getElementById('modeVerbruiken').classList.toggle('active', mode === 'verbruiken');
+}
+function sluitScanModal(){
+  if(html5QrCode){
+    html5QrCode.stop().then(()=> html5QrCode.clear()).catch(()=>{});
+    html5QrCode = null;
+  }
+  closeModal();
+}
+
+async function onScanSuccess(decodedText){
+  if(html5QrCode){
+    try{ await html5QrCode.pause(true); }catch(e){}
+  }
+  const winkelId = document.getElementById('scanWinkel').value;
+  if(!winkelId){ toast('Kies eerst een winkel'); resumeScan(); return; }
+
+  const bestaand = items.find(i => i.barcode === decodedText);
+  const resultArea = document.getElementById('scanResultArea');
+
+  if(bestaand){
+    if(scanMode === 'aanvullen'){
+      const nieuweHoeveelheid = bestaand.hoeveelheid + 1;
+      await sb.from('items').update({ hoeveelheid: nieuweHoeveelheid, winkel_id: winkelId }).eq('id', bestaand.id);
+      resultArea.innerHTML = `
+        <div class="scan-result">
+          <div class="item-name">${bestaand.naam}</div>
+          <div class="item-meta">nieuwe voorraad: ${nieuweHoeveelheid}</div>
+          <label>Prijs bij ${winkelNaam(winkelId)}</label>
+          <input id="scanPrijs" type="number" step="0.01" placeholder="bv. 2.49">
+          <button class="btn-primary" onclick="bevestigPrijsEnGa('${bestaand.id}','${winkelId}')">Bevestigen</button>
+        </div>`;
+      await laadItems();
+    } else {
+      const nieuweHoeveelheid = Math.max(0, bestaand.hoeveelheid - 1);
+      const { data } = await sb.from('items').update({ hoeveelheid: nieuweHoeveelheid }).eq('id', bestaand.id).select().single();
+      await checkLageVoorraad(data);
+      resultArea.innerHTML = `
+        <div class="scan-result">
+          <div class="item-name">${bestaand.naam}</div>
+          <div class="item-meta">resterende voorraad: ${nieuweHoeveelheid}${nieuweHoeveelheid <= bestaand.min_voorraad ? ' — toegevoegd aan boodschappenlijst' : ''}</div>
+          <button class="btn-secondary" onclick="resumeScan()">Volgende scan</button>
+        </div>`;
+      await laadItems();
+    }
+  } else {
+    const gevondenNaam = await zoekProductnaam(decodedText);
+    resultArea.innerHTML = `
+      <div class="scan-result">
+        <div class="item-meta">onbekende barcode: ${decodedText}</div>
+        <label>Productnaam</label>
+        <input id="nieuwProductNaam" value="${gevondenNaam}">
+        <label>Startvoorraad</label>
+        <input id="nieuwProductHoeveelheid" type="number" value="1">
+        <label>Minimum voorraad</label>
+        <input id="nieuwProductMin" type="number" value="1">
+        <label>Prijs bij ${winkelNaam(winkelId)}</label>
+        <input id="nieuwProductPrijs" type="number" step="0.01" placeholder="bv. 2.49">
+        <button class="btn-primary" onclick="maakNieuwProduct('${decodedText}','${winkelId}')">Product toevoegen</button>
+      </div>`;
+  }
+}
+
+async function bevestigPrijsEnGa(itemId, winkelId){
+  const prijs = document.getElementById('scanPrijs').value;
+  await voegOfWerkPrijsBij(itemId, winkelId, prijs);
+  toast('Prijs opgeslagen');
+  resumeScan();
+}
+
+async function maakNieuwProduct(barcode, winkelId){
+  const naam = document.getElementById('nieuwProductNaam').value.trim();
+  if(!naam){ toast('Vul een naam in'); return; }
+  const hoeveelheid = parseFloat(document.getElementById('nieuwProductHoeveelheid').value) || 0;
+  const min = parseFloat(document.getElementById('nieuwProductMin').value) || 1;
+  const prijs = document.getElementById('nieuwProductPrijs').value;
+  const { data, error } = await sb.from('items').insert({
+    barcode, naam, hoeveelheid, min_voorraad: min, winkel_id: winkelId
+  }).select().single();
+  if(error){ toast('Kon product niet aanmaken'); console.error(error); return; }
+  await voegOfWerkPrijsBij(data.id, winkelId, prijs);
+  await laadItems();
+  toast('Product toegevoegd');
+  resumeScan();
+}
+
+function resumeScan(){
+  document.getElementById('scanResultArea').innerHTML = '';
+  if(html5QrCode){ html5QrCode.resume(); }
+}
+
+// ---------- tabs ----------
+document.querySelectorAll('nav.tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('nav.tabs button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    ['voorraad','lijst','winkels'].forEach(t => {
+      document.getElementById('tab-'+t).style.display = (t === btn.dataset.tab) ? 'block' : 'none';
+    });
+    if(btn.dataset.tab === 'lijst') laadLijst();
+  });
+});
+document.getElementById('filterWinkel').addEventListener('change', renderVoorraad);
+document.getElementById('lijstWinkel').addEventListener('change', laadLijst);
+
+// ---------- init ----------
+(async function init(){
+  await laadWinkels();
+  await laadItems();
+})();
+</script>
+</body>
+</html>
