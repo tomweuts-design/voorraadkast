@@ -326,10 +326,11 @@ async function voegOfWerkPrijsBij(itemId, winkelId, prijs){
 
 async function checkLageVoorraad(item){
   if(item.hoeveelheid <= item.min_voorraad && item.winkel_id){
-    await sb.from('boodschappenlijst').upsert(
+    const { error } = await sb.from('boodschappenlijst').upsert(
       { item_id: item.id, winkel_id: item.winkel_id },
       { onConflict: 'item_id,winkel_id' }
     );
+    if(error) console.error('Kon niet toevoegen aan boodschappenlijst', error);
   }
 }
 
@@ -359,8 +360,22 @@ async function vulAanItem(id){
 
 async function markeerBijnaOp(id){
   const item = items.find(i => i.id === id);
-  await checkLageVoorraad(item);
+  if(!item.winkel_id){ toast('Dit product heeft geen winkel gekoppeld'); return; }
+  const rest = prompt(`Resterende voorraad van "${item.naam}"?`, '0');
+  if(rest === null || rest === '' || isNaN(rest)) return;
+  const nieuweHoeveelheid = parseFloat(rest);
+
+  const { error: updateError } = await sb.from('items').update({ hoeveelheid: nieuweHoeveelheid }).eq('id', id);
+  if(updateError){ toast('Kon voorraad niet bijwerken'); console.error(updateError); return; }
+
+  const { error: listError } = await sb.from('boodschappenlijst').upsert(
+    { item_id: id, winkel_id: item.winkel_id },
+    { onConflict: 'item_id,winkel_id' }
+  );
+  if(listError){ toast('Kon niet toevoegen aan lijstje'); console.error(listError); return; }
+
   toast(`Toegevoegd aan lijstje voor ${winkelNaam(item.winkel_id)}`);
+  await laadItems();
   await laadLijst();
 }
 
