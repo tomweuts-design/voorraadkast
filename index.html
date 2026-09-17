@@ -246,7 +246,7 @@ async function laadItems(){
 }
 
 async function laadPrijzen(){
-  const { data, error } = await sb.from('prijzen').select('item_id, prijs, datum').order('datum', { ascending: false });
+  const { data, error } = await sb.from('prijzen').select('item_id, prijs, aangemaakt_op').order('aangemaakt_op', { ascending: false });
   if(error){ console.error(error); return; }
   prijzenMap = {};
   (data || []).forEach(p => {
@@ -256,7 +256,7 @@ async function laadPrijzen(){
 
 async function laadLijst(){
   const filter = document.getElementById('lijstWinkel').value;
-  let q = sb.from('boodschappenlijst').select('*, items(naam), winkels(naam)').order('toegevoegd_op');
+  let q = sb.from('boodschappenlijst').select('*, items(naam, foto_url), winkels(naam)').order('toegevoegd_op');
   if(filter) q = q.eq('winkel_id', filter);
   const { data, error } = await q;
   if(error){ console.error(error); return; }
@@ -300,17 +300,23 @@ function renderVoorraad(){
 function renderLijst(rijen){
   const el = document.getElementById('lijstList');
   if(rijen.length === 0){ el.innerHTML = '<div class="empty">Niets op het lijstje.</div>'; return; }
-  el.innerHTML = rijen.map(r => `
+  el.innerHTML = rijen.map(r => {
+    const prijs = prijzenMap[r.item_id];
+    return `
     <div class="card">
       <div class="item-row">
-        <div>
-          <div class="item-name">${r.items?.naam || '—'}</div>
-          <span class="winkel-tag">${r.winkels?.naam || '—'}</span>
+        <div class="item-row-main">
+          <img class="item-thumb" src="${r.items?.foto_url || ''}" onerror="this.style.visibility='hidden'" alt="">
+          <div>
+            <div class="item-name">${r.items?.naam || '—'}</div>
+            <div class="item-meta">${prijs ? '€' + Number(prijs.prijs).toFixed(2) : ''}</div>
+            <span class="winkel-tag">${r.winkels?.naam || '—'}</span>
+          </div>
         </div>
         <button onclick="haalVanLijst('${r.id}')" style="background:none;border:1px solid var(--line);color:var(--text-dim);border-radius:7px;padding:8px 12px;cursor:pointer;">gekocht</button>
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 }
 
 // ---------- render: winkels beheer ----------
