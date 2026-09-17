@@ -207,6 +207,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let winkels = [];
 let items = [];
+let prijzenMap = {}; // item_id -> { prijs, datum }
 let html5QrCode = null;
 let scanMode = "aanvullen"; // of "verbruiken"
 
@@ -240,7 +241,17 @@ async function laadItems(){
   const { data, error } = await sb.from('items').select('*').order('naam');
   if(error){ console.error(error); return; }
   items = data || [];
+  await laadPrijzen();
   renderVoorraad();
+}
+
+async function laadPrijzen(){
+  const { data, error } = await sb.from('prijzen').select('item_id, prijs, datum').order('datum', { ascending: false });
+  if(error){ console.error(error); return; }
+  prijzenMap = {};
+  (data || []).forEach(p => {
+    if(!prijzenMap[p.item_id]) prijzenMap[p.item_id] = p; // eerste = meest recente, want al gesorteerd
+  });
 }
 
 async function laadLijst(){
@@ -268,7 +279,7 @@ function renderVoorraad(){
           <img class="item-thumb" src="${i.foto_url || ''}" onerror="this.style.visibility='hidden'" alt="">
           <div>
             <div class="item-name">${i.naam}</div>
-            <div class="item-meta">${i.barcode || 'geen barcode'}</div>
+            <div class="item-meta">${i.barcode || 'geen barcode'}${prijzenMap[i.id] ? ' · €' + Number(prijzenMap[i.id].prijs).toFixed(2) : ''}</div>
             <span class="winkel-tag">${winkelNaam(i.winkel_id)}</span>
           </div>
         </div>
@@ -400,6 +411,7 @@ async function haalVanLijst(id){
 // ---------- bewerken (naam, minimum, foto) ----------
 function openBewerkModal(id){
   const item = items.find(i => i.id === id);
+  const huidigePrijs = prijzenMap[id]?.prijs ?? '';
   const root = document.getElementById('modalRoot');
   root.innerHTML = `
     <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
@@ -410,6 +422,8 @@ function openBewerkModal(id){
         <input id="bewerkNaam" value="${item.naam}">
         <label>Minimum voorraad</label>
         <input id="bewerkMin" type="number" value="${item.min_voorraad}">
+        <label>Aankoopprijs bij ${winkelNaam(item.winkel_id)}</label>
+        <input id="bewerkPrijs" type="number" step="0.01" value="${huidigePrijs}" placeholder="bv. 2.49">
         <label>Foto</label>
         ${item.foto_url ? `<img class="foto-preview" src="${item.foto_url}">` : ''}
         <input id="bewerkFoto" type="file" accept="image/*" capture="environment" style="margin-top:8px;">
@@ -420,8 +434,10 @@ function openBewerkModal(id){
 }
 
 async function bewaarBewerking(id){
+  const item = items.find(i => i.id === id);
   const naam = document.getElementById('bewerkNaam').value.trim();
   const min = parseFloat(document.getElementById('bewerkMin').value);
+  const prijs = document.getElementById('bewerkPrijs').value;
   const fotoInput = document.getElementById('bewerkFoto');
   if(!naam){ toast('Vul een naam in'); return; }
 
@@ -438,6 +454,15 @@ async function bewaarBewerking(id){
 
   const { error } = await sb.from('items').update(updates).eq('id', id);
   if(error){ toast('Kon niet opslaan'); console.error(error); return; }
+
+  if(prijs !== '' && !isNaN(prijs) && item.winkel_id){
+    const huidigePrijs = prijzenMap[id]?.prijs;
+    if(parseFloat(prijs) !== parseFloat(huidigePrijs)){
+      const { error: prijsError } = await sb.from('prijzen').insert({ item_id: id, winkel_id: item.winkel_id, prijs: parseFloat(prijs) });
+      if(prijsError) console.error('Kon prijs niet opslaan', prijsError);
+    }
+  }
+
   closeModal();
   await laadItems();
   toast('Opgeslagen');
