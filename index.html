@@ -194,6 +194,7 @@
       <select id="filterWinkel" style="flex:1"><option value="">Alle winkels</option></select>
       <button class="btn-secondary" style="width:auto; margin:0; padding:9px 16px;" onclick="openNieuwProductModal()">+ toevoegen</button>
     </div>
+    <select id="filterCategorie" style="margin-bottom:14px;"><option value="">Alle categorieën</option></select>
     <div id="voorraadList"></div>
   </div>
 
@@ -221,6 +222,16 @@
 
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
+<datalist id="categorieSuggesties">
+  <option value="Voeding">
+  <option value="Snacks">
+  <option value="Dranken">
+  <option value="Diepvries">
+  <option value="Kuismiddelen">
+  <option value="Verzorging">
+  <option value="Huishouden">
+  <option value="Overig">
+</datalist>
 
 <script>
 // ====== CONFIGURATIE — vul hier je eigen Supabase-project in ======
@@ -229,7 +240,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_IjmnfdHK8CyJ8i2-KQZ2HA_BDHRFWw5";
 // ====================================================================
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const APP_VERSION = "1.5.1";
+const APP_VERSION = "1.7.0";
 
 let winkels = [];
 let items = [];
@@ -268,7 +279,17 @@ async function laadItems(){
   if(error){ console.error(error); return; }
   items = data || [];
   await laadPrijzen();
+  vulCategorieFilter();
   renderVoorraad();
+}
+
+function vulCategorieFilter(){
+  const huidig = document.getElementById('filterCategorie').value;
+  const categorieen = [...new Set(items.map(i => i.categorie).filter(Boolean))].sort();
+  document.getElementById('filterCategorie').innerHTML =
+    '<option value="">Alle categorieën</option>' +
+    categorieen.map(c => `<option value="${c}">${c}</option>`).join('');
+  document.getElementById('filterCategorie').value = huidig;
 }
 
 async function laadPrijzen(){
@@ -291,10 +312,14 @@ async function laadLijst(){
 
 // ---------- render: voorraad ----------
 function renderVoorraad(){
-  const filter = document.getElementById('filterWinkel').value;
-  const lijst = items.filter(i => !filter || i.winkel_id === filter);
+  const filterWinkelId = document.getElementById('filterWinkel').value;
+  const filterCategorie = document.getElementById('filterCategorie').value;
+  const lijst = items
+    .filter(i => !filterWinkelId || i.winkel_id === filterWinkelId)
+    .filter(i => !filterCategorie || i.categorie === filterCategorie)
+    .sort((a, b) => (a.categorie || 'zzz').localeCompare(b.categorie || 'zzz') || a.naam.localeCompare(b.naam));
   const el = document.getElementById('voorraadList');
-  if(lijst.length === 0){ el.innerHTML = '<div class="empty">Nog geen producten. Scan er een om te beginnen.</div>'; return; }
+  if(lijst.length === 0){ el.innerHTML = '<div class="empty">Niets gevonden binnen deze selectie.</div>'; return; }
   el.innerHTML = lijst.map(i => {
     const low = i.hoeveelheid <= i.min_voorraad;
     const pct = Math.min(100, i.min_voorraad > 0 ? (i.hoeveelheid / (i.min_voorraad * 2)) * 100 : 100);
@@ -307,6 +332,7 @@ function renderVoorraad(){
             <div class="item-name">${i.naam}</div>
             <div class="item-meta">${i.barcode || 'geen barcode'}${prijzenMap[i.id] ? ' · €' + Number(prijzenMap[i.id].prijs).toFixed(2) : ''}</div>
             <span class="winkel-tag">${winkelNaam(i.winkel_id)}</span>
+            ${i.categorie ? `<span class="winkel-tag" style="border-color:var(--sage); color:var(--sage); margin-left:6px;">${i.categorie}</span>` : ''}
           </div>
         </div>
         <div class="qty ${low ? 'low' : ''}">${i.hoeveelheid}</div>
@@ -455,6 +481,8 @@ function openNieuwProductModal(){
         <input id="npBarcode" placeholder="laat leeg indien onbekend">
         <label>Winkel</label>
         <select id="npWinkel">${winkelOpties}</select>
+        <label>Categorie (optioneel)</label>
+        <input id="npCategorie" list="categorieSuggesties" placeholder="bv. Voeding, Kuismiddelen...">
         <label>Startvoorraad</label>
         <input id="npHoeveelheid" type="number" value="1">
         <label>Minimum voorraad</label>
@@ -474,13 +502,14 @@ async function bevestigNieuwProduct(){
   if(!naam){ toast('Vul een naam in'); return; }
   const barcode = document.getElementById('npBarcode').value.trim() || null;
   const winkelId = document.getElementById('npWinkel').value || null;
+  const categorie = document.getElementById('npCategorie').value.trim() || null;
   const hoeveelheid = parseFloat(document.getElementById('npHoeveelheid').value) || 0;
   const min = parseFloat(document.getElementById('npMin').value) || 1;
   const prijs = document.getElementById('npPrijs').value;
   const fotoInput = document.getElementById('npFoto');
 
   const { data, error } = await sb.from('items').insert({
-    barcode, naam, hoeveelheid, min_voorraad: min, winkel_id: winkelId
+    barcode, naam, categorie, hoeveelheid, min_voorraad: min, winkel_id: winkelId
   }).select().single();
   if(error){ toast('Kon product niet aanmaken'); console.error(error); return; }
 
@@ -612,6 +641,10 @@ function openBewerkModal(id){
         <h2>Product bewerken</h2>
         <label>Naam</label>
         <input id="bewerkNaam" value="${item.naam}">
+        <label>Barcode</label>
+        <input id="bewerkBarcode" value="${item.barcode || ''}" placeholder="laat leeg indien onbekend">
+        <label>Categorie</label>
+        <input id="bewerkCategorie" list="categorieSuggesties" value="${item.categorie || ''}" placeholder="bv. Voeding, Kuismiddelen...">
         <label>Minimum voorraad</label>
         <input id="bewerkMin" type="number" value="${item.min_voorraad}">
         <label>Aankoopprijs bij ${winkelNaam(item.winkel_id)}</label>
@@ -639,12 +672,14 @@ async function verwijderProduct(id){
 async function bewaarBewerking(id){
   const item = items.find(i => i.id === id);
   const naam = document.getElementById('bewerkNaam').value.trim();
+  const barcode = document.getElementById('bewerkBarcode').value.trim() || null;
+  const categorie = document.getElementById('bewerkCategorie').value.trim() || null;
   const min = parseFloat(document.getElementById('bewerkMin').value);
   const prijs = document.getElementById('bewerkPrijs').value;
   const fotoInput = document.getElementById('bewerkFoto');
   if(!naam){ toast('Vul een naam in'); return; }
 
-  const updates = { naam, min_voorraad: isNaN(min) ? 1 : min };
+  const updates = { naam, barcode, categorie, min_voorraad: isNaN(min) ? 1 : min };
 
   if(fotoInput.files && fotoInput.files[0]){
     const file = fotoInput.files[0];
@@ -656,7 +691,10 @@ async function bewaarBewerking(id){
   }
 
   const { error } = await sb.from('items').update(updates).eq('id', id);
-  if(error){ toast('Kon niet opslaan'); console.error(error); return; }
+  if(error){
+    toast(error.code === '23505' ? 'Die barcode is al in gebruik bij een ander product' : 'Kon niet opslaan');
+    console.error(error); return;
+  }
 
   if(prijs !== '' && !isNaN(prijs) && item.winkel_id){
     const huidigePrijs = prijzenMap[id]?.prijs;
@@ -773,6 +811,8 @@ async function onScanSuccess(decodedText){
         ${info.foto ? `<img class="foto-preview" src="${info.foto}">` : ''}
         <label>Productnaam</label>
         <input id="nieuwProductNaam" value="${info.naam}">
+        <label>Categorie (optioneel)</label>
+        <input id="nieuwProductCategorie" list="categorieSuggesties" placeholder="bv. Voeding, Kuismiddelen...">
         <label>Startvoorraad</label>
         <input id="nieuwProductHoeveelheid" type="number" value="1">
         <label>Minimum voorraad</label>
@@ -795,12 +835,13 @@ async function bevestigPrijsEnGa(itemId, winkelId){
 async function maakNieuwProduct(barcode, winkelId){
   const naam = document.getElementById('nieuwProductNaam').value.trim();
   if(!naam){ toast('Vul een naam in'); return; }
+  const categorie = document.getElementById('nieuwProductCategorie').value.trim() || null;
   const hoeveelheid = parseFloat(document.getElementById('nieuwProductHoeveelheid').value) || 0;
   const min = parseFloat(document.getElementById('nieuwProductMin').value) || 1;
   const prijs = document.getElementById('nieuwProductPrijs').value;
   const foto_url = document.getElementById('nieuwProductFoto').value || null;
   const { data, error } = await sb.from('items').insert({
-    barcode, naam, hoeveelheid, min_voorraad: min, winkel_id: winkelId, foto_url
+    barcode, naam, categorie, hoeveelheid, min_voorraad: min, winkel_id: winkelId, foto_url
   }).select().single();
   if(error){ toast('Kon product niet aanmaken'); console.error(error); return; }
   await voegOfWerkPrijsBij(data.id, winkelId, prijs);
@@ -826,6 +867,7 @@ document.querySelectorAll('nav.tabs button').forEach(btn => {
   });
 });
 document.getElementById('filterWinkel').addEventListener('change', renderVoorraad);
+document.getElementById('filterCategorie').addEventListener('change', renderVoorraad);
 document.getElementById('lijstWinkel').addEventListener('change', laadLijst);
 
 // ---------- over deze app ----------
