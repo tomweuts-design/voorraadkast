@@ -240,7 +240,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_IjmnfdHK8CyJ8i2-KQZ2HA_BDHRFWw5";
 // ====================================================================
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const APP_VERSION = "1.7.0";
+const APP_VERSION = "1.8.0";
 
 let winkels = [];
 let items = [];
@@ -478,7 +478,10 @@ function openNieuwProductModal(){
         <label>Naam</label>
         <input id="npNaam" placeholder="bv. Tandpasta">
         <label>Barcode (optioneel)</label>
-        <input id="npBarcode" placeholder="laat leeg indien onbekend">
+        <div style="display:flex; gap:8px;">
+          <input id="npBarcode" placeholder="laat leeg indien onbekend">
+          <button type="button" class="btn-secondary" style="width:auto; margin:0; padding:9px 12px;" onclick="openBarcodeScanOverlay('npBarcode')">📷</button>
+        </div>
         <label>Winkel</label>
         <select id="npWinkel">${winkelOpties}</select>
         <label>Categorie (optioneel)</label>
@@ -642,7 +645,10 @@ function openBewerkModal(id){
         <label>Naam</label>
         <input id="bewerkNaam" value="${item.naam}">
         <label>Barcode</label>
-        <input id="bewerkBarcode" value="${item.barcode || ''}" placeholder="laat leeg indien onbekend">
+        <div style="display:flex; gap:8px;">
+          <input id="bewerkBarcode" value="${item.barcode || ''}" placeholder="laat leeg indien onbekend">
+          <button type="button" class="btn-secondary" style="width:auto; margin:0; padding:9px 12px;" onclick="openBarcodeScanOverlay('bewerkBarcode')">📷</button>
+        </div>
         <label>Categorie</label>
         <input id="bewerkCategorie" list="categorieSuggesties" value="${item.categorie || ''}" placeholder="bv. Voeding, Kuismiddelen...">
         <label>Minimum voorraad</label>
@@ -853,6 +859,45 @@ async function maakNieuwProduct(barcode, winkelId){
 function resumeScan(){
   document.getElementById('scanResultArea').innerHTML = '';
   if(html5QrCode){ html5QrCode.resume(); }
+}
+
+// ---------- barcode scannen naar een willekeurig invulveld ----------
+function openBarcodeScanOverlay(targetInputId){
+  const overlay = document.createElement('div');
+  overlay.id = 'barcodeScanOverlay';
+  overlay.className = 'modal-overlay';
+  overlay.style.zIndex = '300';
+  overlay.innerHTML = `
+    <div class="modal">
+      <button class="modal-close" onclick="sluitBarcodeScanOverlay()">×</button>
+      <h2>Scan barcode</h2>
+      <div id="miniReader"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  window._miniScanTarget = targetInputId;
+  window._miniQr = new Html5Qrcode("miniReader");
+  window._miniQr.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: 220 },
+    (decodedText) => {
+      const veld = document.getElementById(window._miniScanTarget);
+      if(veld) veld.value = decodedText;
+      sluitBarcodeScanOverlay();
+    },
+    () => {}
+  ).catch(err => {
+    document.getElementById('miniReader').innerHTML = `<div class="empty">Camera niet beschikbaar: ${err}</div>`;
+  });
+}
+
+function sluitBarcodeScanOverlay(){
+  if(window._miniQr){
+    window._miniQr.stop().then(()=> window._miniQr.clear()).catch(()=>{});
+    window._miniQr = null;
+  }
+  const el = document.getElementById('barcodeScanOverlay');
+  if(el) el.remove();
 }
 
 // ---------- tabs ----------
