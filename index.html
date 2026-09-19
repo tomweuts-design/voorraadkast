@@ -60,6 +60,9 @@
     border-radius:8px; padding:9px 10px; font-family:'IBM Plex Sans'; font-size:.92rem;
     width:100%;
   }
+  input[type="checkbox"]{
+    width:18px; height:18px; flex:none; accent-color:var(--mustard); padding:0;
+  }
   label{ font-size:.78rem; color:var(--text-dim); display:block; margin:10px 0 4px; }
 
   .winkel-filter{ margin-bottom:14px; }
@@ -226,7 +229,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_IjmnfdHK8CyJ8i2-KQZ2HA_BDHRFWw5";
 // ====================================================================
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const APP_VERSION = "1.5.0";
+const APP_VERSION = "1.5.1";
 
 let winkels = [];
 let items = [];
