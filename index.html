@@ -176,7 +176,7 @@
 <header>
   <button class="about-btn" onclick="openAboutModal()">ℹ️</button>
   <h1>Voorraadkast</h1>
-  <div class="sub">wat er in huis is, en waar het vandaan komt created by tom weuts -version 0.2-</div>
+  <div class="sub">wat er in huis is, en waar het vandaan komt</div>
   <nav class="tabs">
     <button data-tab="voorraad" class="active">Voorraad</button>
     <button data-tab="lijst">Boodschappen</button>
@@ -194,8 +194,9 @@
   </div>
 
   <div id="tab-lijst" style="display:none">
-    <div class="winkel-filter">
-      <select id="lijstWinkel"><option value="">Alle winkels</option></select>
+    <div class="winkel-filter" style="display:flex; gap:8px;">
+      <select id="lijstWinkel" style="flex:1"><option value="">Alle winkels</option></select>
+      <button class="btn-secondary" style="width:auto; margin:0; padding:9px 16px;" onclick="openHandmatigToevoegenModal()">+ toevoegen</button>
     </div>
     <div id="lijstList"></div>
   </div>
@@ -223,7 +224,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_IjmnfdHK8CyJ8i2-KQZ2HA_BDHRFWw5";
 // ====================================================================
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 
 let winkels = [];
 let items = [];
@@ -431,6 +432,47 @@ async function markeerBijnaOp(id){
 
 async function haalVanLijst(id){
   await sb.from('boodschappenlijst').delete().eq('id', id);
+  await laadLijst();
+}
+
+// ---------- handmatig toevoegen aan boodschappenlijst ----------
+function openHandmatigToevoegenModal(){
+  const itemOpties = items.map(i => `<option value="${i.id}" data-winkel="${i.winkel_id || ''}">${i.naam}</option>`).join('');
+  const winkelOpties = winkels.map(w => `<option value="${w.id}">${w.naam}</option>`).join('');
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <button class="modal-close" onclick="closeModal()">×</button>
+        <h2>Toevoegen aan lijstje</h2>
+        <label>Product</label>
+        <select id="handmatigItem" onchange="syncHandmatigWinkel()">${itemOpties}</select>
+        <label>Winkel</label>
+        <select id="handmatigWinkel">${winkelOpties}</select>
+        <button class="btn-primary" onclick="bevestigHandmatigToevoegen()">Toevoegen</button>
+      </div>
+    </div>
+  `;
+  syncHandmatigWinkel();
+}
+
+function syncHandmatigWinkel(){
+  const itemSelect = document.getElementById('handmatigItem');
+  const gekozenWinkel = itemSelect.selectedOptions[0]?.dataset.winkel;
+  if(gekozenWinkel) document.getElementById('handmatigWinkel').value = gekozenWinkel;
+}
+
+async function bevestigHandmatigToevoegen(){
+  const itemId = document.getElementById('handmatigItem').value;
+  const winkelId = document.getElementById('handmatigWinkel').value;
+  if(!itemId || !winkelId){ toast('Kies een product en een winkel'); return; }
+  const { error } = await sb.from('boodschappenlijst').upsert(
+    { item_id: itemId, winkel_id: winkelId },
+    { onConflict: 'item_id,winkel_id' }
+  );
+  if(error){ toast('Kon niet toevoegen'); console.error(error); return; }
+  closeModal();
+  toast('Toegevoegd aan lijstje');
   await laadLijst();
 }
 
