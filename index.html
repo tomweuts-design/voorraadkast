@@ -187,8 +187,9 @@
 <main>
 
   <div id="tab-voorraad">
-    <div class="winkel-filter">
-      <select id="filterWinkel"><option value="">Alle winkels</option></select>
+    <div class="winkel-filter" style="display:flex; gap:8px;">
+      <select id="filterWinkel" style="flex:1"><option value="">Alle winkels</option></select>
+      <button class="btn-secondary" style="width:auto; margin:0; padding:9px 16px;" onclick="openNieuwProductModal()">+ toevoegen</button>
     </div>
     <div id="voorraadList"></div>
   </div>
@@ -224,7 +225,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_IjmnfdHK8CyJ8i2-KQZ2HA_BDHRFWw5";
 // ====================================================================
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.3.0";
 
 let winkels = [];
 let items = [];
@@ -433,6 +434,67 @@ async function markeerBijnaOp(id){
 async function haalVanLijst(id){
   await sb.from('boodschappenlijst').delete().eq('id', id);
   await laadLijst();
+}
+
+// ---------- handmatig nieuw product ----------
+function openNieuwProductModal(){
+  const winkelOpties = winkels.map(w => `<option value="${w.id}">${w.naam}</option>`).join('');
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <button class="modal-close" onclick="closeModal()">×</button>
+        <h2>Nieuw product</h2>
+        <label>Naam</label>
+        <input id="npNaam" placeholder="bv. Tandpasta">
+        <label>Barcode (optioneel)</label>
+        <input id="npBarcode" placeholder="laat leeg indien onbekend">
+        <label>Winkel</label>
+        <select id="npWinkel">${winkelOpties}</select>
+        <label>Startvoorraad</label>
+        <input id="npHoeveelheid" type="number" value="1">
+        <label>Minimum voorraad</label>
+        <input id="npMin" type="number" value="1">
+        <label>Prijs (optioneel)</label>
+        <input id="npPrijs" type="number" step="0.01" placeholder="bv. 2.49">
+        <label>Foto (optioneel)</label>
+        <input id="npFoto" type="file" accept="image/*" capture="environment">
+        <button class="btn-primary" onclick="bevestigNieuwProduct()">Product toevoegen</button>
+      </div>
+    </div>
+  `;
+}
+
+async function bevestigNieuwProduct(){
+  const naam = document.getElementById('npNaam').value.trim();
+  if(!naam){ toast('Vul een naam in'); return; }
+  const barcode = document.getElementById('npBarcode').value.trim() || null;
+  const winkelId = document.getElementById('npWinkel').value || null;
+  const hoeveelheid = parseFloat(document.getElementById('npHoeveelheid').value) || 0;
+  const min = parseFloat(document.getElementById('npMin').value) || 1;
+  const prijs = document.getElementById('npPrijs').value;
+  const fotoInput = document.getElementById('npFoto');
+
+  const { data, error } = await sb.from('items').insert({
+    barcode, naam, hoeveelheid, min_voorraad: min, winkel_id: winkelId
+  }).select().single();
+  if(error){ toast('Kon product niet aanmaken'); console.error(error); return; }
+
+  if(fotoInput.files && fotoInput.files[0]){
+    const file = fotoInput.files[0];
+    const pad = `${data.id}-${Date.now()}.${file.name.split('.').pop()}`;
+    const { error: uploadError } = await sb.storage.from('productfotos').upload(pad, file, { upsert: true });
+    if(!uploadError){
+      const { data: urlData } = sb.storage.from('productfotos').getPublicUrl(pad);
+      await sb.from('items').update({ foto_url: urlData.publicUrl }).eq('id', data.id);
+    }
+  }
+
+  if(winkelId) await voegOfWerkPrijsBij(data.id, winkelId, prijs);
+
+  closeModal();
+  await laadItems();
+  toast('Product toegevoegd');
 }
 
 // ---------- handmatig toevoegen aan boodschappenlijst ----------
