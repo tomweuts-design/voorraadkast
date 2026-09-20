@@ -161,6 +161,12 @@
     background:none; border:1px solid var(--line); color:var(--text-dim);
     font-size:1rem; cursor:pointer;
   }
+  .settings-btn{
+    position:absolute; top:20px; right:60px;
+    width:34px; height:34px; border-radius:999px;
+    background:none; border:1px solid var(--line); color:var(--text-dim);
+    font-size:1rem; cursor:pointer;
+  }
   .about-menu-btn{
     display:block; width:100%; text-align:left; margin:0 0 8px;
     padding:13px 14px; border-radius:8px; border:1px solid var(--line);
@@ -178,18 +184,21 @@
 
 <header>
   <button class="about-btn" onclick="openAboutModal()">ℹ️</button>
+  <button class="settings-btn" onclick="openInstellingenModal()">⚙️</button>
   <h1>Voorraadkast</h1>
   <div class="sub">wat er in huis is, en waar het vandaan komt</div>
-  <nav class="tabs">
+  <nav class="tabs" id="mainTabs">
     <button data-tab="voorraad" class="active">Voorraad</button>
     <button data-tab="lijst">Boodschappen</button>
     <button data-tab="winkels">Winkels</button>
+    <button data-tab="dedicated" id="dedicatedTabBtn" style="display:none;">Scan</button>
   </nav>
 </header>
 
 <main>
 
   <div id="tab-voorraad">
+    <button id="aanvulToggleBtn" class="btn-secondary" style="margin:0 0 10px; border-color:var(--sage); color:var(--sage);" onclick="toggleAanvulModus()">🔄 Aanvul-modus starten</button>
     <div class="winkel-filter" style="display:flex; gap:8px;">
       <select id="filterWinkel" style="flex:1"><option value="">Alle winkels</option></select>
       <button class="btn-secondary" style="width:auto; margin:0; padding:9px 16px;" onclick="openNieuwProductModal()">+ toevoegen</button>
@@ -216,6 +225,16 @@
     <ul class="plain" id="winkelsBeheerList" style="margin-top:18px;"></ul>
   </div>
 
+  <div id="tab-dedicated" style="display:none">
+    <div class="mode-toggle">
+      <button id="dedModeVerbruik" class="active" onclick="zetDedicatedModus('verbruik')">Verbruik</button>
+      <button id="dedModeAanvullen" onclick="zetDedicatedModus('aanvullen')">Aanvullen</button>
+    </div>
+    <div id="dedicatedWinkelLabel" class="item-meta" style="margin-bottom:10px;"></div>
+    <div id="dedicatedReader"></div>
+    <div id="dedicatedResultArea"></div>
+  </div>
+
 </main>
 
 <button class="fab" onclick="openScanModal()">📷 Scannen</button>
@@ -240,7 +259,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_IjmnfdHK8CyJ8i2-KQZ2HA_BDHRFWw5";
 // ====================================================================
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const APP_VERSION = "1.8.0";
+const APP_VERSION = "2.0.0";
 
 let winkels = [];
 let items = [];
@@ -733,17 +752,20 @@ async function zoekProductInfo(barcode){
 // ---------- scan modal ----------
 function openScanModal(){
   const root = document.getElementById('modalRoot');
+  const vooringesteld = aanvulModusActief;
   root.innerHTML = `
     <div class="modal-overlay" onclick="if(event.target===this) sluitScanModal()">
       <div class="modal">
         <button class="modal-close" onclick="sluitScanModal()">×</button>
         <h2>Scannen</h2>
+        ${vooringesteld ? `<div class="item-meta">Aanvul-modus actief bij ${winkelNaam(aanvulWinkelId)}</div>` : `
         <div class="mode-toggle">
           <button id="modeAanvullen" class="active" onclick="setScanMode('aanvullen')">Aanvullen</button>
           <button id="modeVerbruiken" onclick="setScanMode('verbruiken')">Verbruiken</button>
         </div>
         <label>Winkel (voor deze scan-sessie)</label>
         <select id="scanWinkel">${winkels.map(w=>`<option value="${w.id}">${w.naam}</option>`).join('')}</select>
+        `}
         <div id="reader"></div>
         <div id="scanResultArea"></div>
         <button class="btn-secondary" onclick="sluitScanModal()">Sluiten</button>
@@ -778,8 +800,9 @@ async function onScanSuccess(decodedText){
   if(html5QrCode){
     try{ await html5QrCode.pause(true); }catch(e){}
   }
-  const winkelId = document.getElementById('scanWinkel').value;
+  const winkelId = aanvulModusActief ? aanvulWinkelId : document.getElementById('scanWinkel').value;
   if(!winkelId){ toast('Kies eerst een winkel'); resumeScan(); return; }
+  if(aanvulModusActief) resetAanvulTimer();
 
   const bestaand = items.find(i => i.barcode === decodedText);
   const resultArea = document.getElementById('scanResultArea');
@@ -905,10 +928,12 @@ document.querySelectorAll('nav.tabs button').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('nav.tabs button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    ['voorraad','lijst','winkels'].forEach(t => {
+    ['voorraad','lijst','winkels','dedicated'].forEach(t => {
       document.getElementById('tab-'+t).style.display = (t === btn.dataset.tab) ? 'block' : 'none';
     });
     if(btn.dataset.tab === 'lijst') laadLijst();
+    if(btn.dataset.tab === 'dedicated') startDedicatedCamera();
+    else stopDedicatedCamera();
   });
 });
 document.getElementById('filterWinkel').addEventListener('change', renderVoorraad);
@@ -987,10 +1012,287 @@ async function toonUpdateCheck(){
   }
 }
 
+// ---------- instellingen (lokaal per toestel) ----------
+function getInstellingen(){
+  return {
+    dedicated: localStorage.getItem('vk_dedicated') === 'true',
+    timerMin: parseFloat(localStorage.getItem('vk_timer_min')) || 5
+  };
+}
+
+function openInstellingenModal(){
+  const inst = getInstellingen();
+  document.getElementById('modalRoot').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <button class="modal-close" onclick="closeModal()">×</button>
+        <h2>Instellingen (dit toestel)</h2>
+        <label style="display:flex; align-items:center; gap:8px; margin-top:14px;">
+          <input type="checkbox" id="instDedicated" ${inst.dedicated ? 'checked' : ''}> Dit is een dedicated toestel
+        </label>
+        <label>Timer (minuten) — tijd zonder scan voor de aanvul-modus terugvalt</label>
+        <input id="instTimer" type="number" step="0.5" min="0.5" value="${inst.timerMin}">
+        <button class="btn-primary" onclick="bewaarInstellingen()">Opslaan</button>
+      </div>
+    </div>
+  `;
+}
+
+function bewaarInstellingen(){
+  const dedicated = document.getElementById('instDedicated').checked;
+  const timerMin = parseFloat(document.getElementById('instTimer').value) || 5;
+  localStorage.setItem('vk_dedicated', dedicated ? 'true' : 'false');
+  localStorage.setItem('vk_timer_min', timerMin);
+  closeModal();
+  toast('Instellingen opgeslagen (dit toestel)');
+  toepasApparaatModus();
+}
+
+function toepasApparaatModus(){
+  const inst = getInstellingen();
+  document.getElementById('dedicatedTabBtn').style.display = inst.dedicated ? 'inline-block' : 'none';
+  document.getElementById('aanvulToggleBtn').style.display = inst.dedicated ? 'none' : 'block';
+  if(inst.dedicated){
+    document.getElementById('dedicatedTabBtn').click();
+  } else {
+    stopDedicatedCamera();
+  }
+}
+
+// ---------- winkel kiezen (herbruikbaar mini-modal) ----------
+function openKiesWinkelModal(callback){
+  const winkelOpties = winkels.map(w => `<option value="${w.id}">${w.naam}</option>`).join('');
+  document.getElementById('modalRoot').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <button class="modal-close" onclick="closeModal()">×</button>
+        <h2>Kies winkel</h2>
+        <select id="kiesWinkelSelect">${winkelOpties}</select>
+        <button class="btn-primary" onclick="bevestigKiesWinkel()">Bevestigen</button>
+      </div>
+    </div>
+  `;
+  window._kiesWinkelCallback = callback;
+}
+function bevestigKiesWinkel(){
+  const winkelId = document.getElementById('kiesWinkelSelect').value;
+  closeModal();
+  if(window._kiesWinkelCallback) window._kiesWinkelCallback(winkelId);
+}
+
+// ---------- aanvul-modus op een gewoon toestel ----------
+let aanvulModusActief = false;
+let aanvulWinkelId = null;
+let aanvulTimerHandle = null;
+
+function toggleAanvulModus(){
+  if(aanvulModusActief){
+    stopAanvulModus();
+    toast('Aanvul-modus gestopt');
+  } else {
+    if(winkels.length === 0){ toast('Voeg eerst een winkel toe'); return; }
+    openKiesWinkelModal((winkelId) => {
+      aanvulModusActief = true;
+      aanvulWinkelId = winkelId;
+      resetAanvulTimer();
+      updateAanvulKnop();
+      toast(`Aanvul-modus actief bij ${winkelNaam(winkelId)}`);
+    });
+  }
+}
+
+function stopAanvulModus(){
+  aanvulModusActief = false;
+  aanvulWinkelId = null;
+  if(aanvulTimerHandle) clearTimeout(aanvulTimerHandle);
+  updateAanvulKnop();
+}
+
+function resetAanvulTimer(){
+  if(aanvulTimerHandle) clearTimeout(aanvulTimerHandle);
+  const inst = getInstellingen();
+  aanvulTimerHandle = setTimeout(() => {
+    stopAanvulModus();
+    toast('Aanvul-modus automatisch afgesloten');
+  }, inst.timerMin * 60000);
+}
+
+function updateAanvulKnop(){
+  const btn = document.getElementById('aanvulToggleBtn');
+  if(!btn) return;
+  if(aanvulModusActief){
+    btn.textContent = `✅ Aanvullen actief bij ${winkelNaam(aanvulWinkelId)} — tik om te stoppen`;
+  } else {
+    btn.textContent = '🔄 Aanvul-modus starten';
+  }
+}
+
+// ---------- dedicated toestel: permanent scanscherm ----------
+let dedicatedQr = null;
+let dedicatedModus = 'verbruik'; // of 'aanvullen'
+let dedicatedWinkelId = null;
+let dedicatedTimerHandle = null;
+
+function startDedicatedCamera(){
+  if(dedicatedQr) return;
+  dedicatedQr = new Html5Qrcode("dedicatedReader");
+  dedicatedQr.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: 220 },
+    onDedicatedScan,
+    () => {}
+  ).catch(err => {
+    document.getElementById('dedicatedReader').innerHTML = `<div class="empty">Camera niet beschikbaar: ${err}</div>`;
+  });
+}
+
+function stopDedicatedCamera(){
+  if(dedicatedQr){
+    dedicatedQr.stop().then(()=> dedicatedQr.clear()).catch(()=>{});
+    dedicatedQr = null;
+  }
+  if(dedicatedTimerHandle) clearTimeout(dedicatedTimerHandle);
+}
+
+function zetDedicatedModus(modus){
+  if(modus === 'aanvullen'){
+    if(winkels.length === 0){ toast('Voeg eerst een winkel toe'); return; }
+    openKiesWinkelModal((winkelId) => {
+      dedicatedModus = 'aanvullen';
+      dedicatedWinkelId = winkelId;
+      resetDedicatedTimer();
+      updateDedicatedModusUI();
+    });
+  } else {
+    dedicatedModus = 'verbruik';
+    dedicatedWinkelId = null;
+    if(dedicatedTimerHandle) clearTimeout(dedicatedTimerHandle);
+    updateDedicatedModusUI();
+  }
+}
+
+function updateDedicatedModusUI(){
+  document.getElementById('dedModeVerbruik').classList.toggle('active', dedicatedModus === 'verbruik');
+  document.getElementById('dedModeAanvullen').classList.toggle('active', dedicatedModus === 'aanvullen');
+  document.getElementById('dedicatedWinkelLabel').textContent =
+    dedicatedModus === 'aanvullen' ? `Aanvullen bij ${winkelNaam(dedicatedWinkelId)}` : '';
+}
+
+function resetDedicatedTimer(){
+  if(dedicatedTimerHandle) clearTimeout(dedicatedTimerHandle);
+  const inst = getInstellingen();
+  dedicatedTimerHandle = setTimeout(() => {
+    dedicatedModus = 'verbruik';
+    dedicatedWinkelId = null;
+    updateDedicatedModusUI();
+    toast('Terug naar verbruik-modus');
+  }, inst.timerMin * 60000);
+}
+
+async function onDedicatedScan(decodedText){
+  if(dedicatedQr){ try{ await dedicatedQr.pause(true); }catch(e){} }
+  const bestaand = items.find(i => i.barcode === decodedText);
+  const resultArea = document.getElementById('dedicatedResultArea');
+
+  if(!bestaand){
+    const info = await zoekProductInfo(decodedText);
+    const winkelOpties = winkels.map(w => `<option value="${w.id}">${w.naam}</option>`).join('');
+    resultArea.innerHTML = `
+      <div class="scan-result">
+        <div class="item-meta">onbekende barcode: ${decodedText}</div>
+        ${info.foto ? `<img class="foto-preview" src="${info.foto}">` : ''}
+        <label>Productnaam</label>
+        <input id="dedNieuwNaam" value="${info.naam}">
+        <label>Winkel</label>
+        <select id="dedNieuwWinkel">${winkelOpties}</select>
+        <label>Startvoorraad</label>
+        <input id="dedNieuwHoeveelheid" type="number" value="1">
+        <label>Minimum voorraad</label>
+        <input id="dedNieuwMin" type="number" value="1">
+        <input type="hidden" id="dedNieuwFoto" value="${info.foto}">
+        <button class="btn-primary" onclick="dedicatedMaakNieuwProduct('${decodedText}')">Product toevoegen</button>
+      </div>`;
+    if(dedicatedWinkelId) document.getElementById('dedNieuwWinkel').value = dedicatedWinkelId;
+    return;
+  }
+
+  if(dedicatedModus === 'aanvullen'){
+    const nieuweHoeveelheid = bestaand.hoeveelheid + 1;
+    await sb.from('items').update({ hoeveelheid: nieuweHoeveelheid, winkel_id: dedicatedWinkelId }).eq('id', bestaand.id);
+    toast(`+1 ${bestaand.naam} (${nieuweHoeveelheid})`);
+    resetDedicatedTimer();
+    await laadItems();
+    dedicatedResumeScan();
+  } else {
+    const voorstel = Math.max(0, bestaand.hoeveelheid - 1);
+    const voorselecteerJa = bestaand.min_voorraad > 0 && voorstel <= bestaand.min_voorraad;
+    resultArea.innerHTML = `
+      <div class="scan-result">
+        <img class="foto-preview" src="${bestaand.foto_url || ''}" onerror="this.style.display='none'">
+        <div class="item-name">${bestaand.naam}</div>
+        <label>Hoeveel zijn er nog?</label>
+        <div style="display:flex; gap:8px;">
+          <input id="dedResterend" type="number" value="${voorstel}" style="flex:1">
+          <button type="button" class="btn-secondary" style="width:auto; margin:0; padding:9px 14px;" onclick="document.getElementById('dedResterend').value=0">= op</button>
+        </div>
+        <label>Op boodschappenlijst zetten?</label>
+        <div class="mode-toggle">
+          <button id="dedLijstJa" class="${voorselecteerJa ? 'active' : ''}" onclick="dedZetLijstKeuze(true)">Ja</button>
+          <button id="dedLijstNee" class="${voorselecteerJa ? '' : 'active'}" onclick="dedZetLijstKeuze(false)">Nee</button>
+        </div>
+        <button class="btn-primary" onclick="bevestigDedicatedVerbruik('${bestaand.id}')">Bevestigen</button>
+      </div>`;
+    window._dedLijstKeuze = voorselecteerJa;
+  }
+}
+
+function dedZetLijstKeuze(waarde){
+  window._dedLijstKeuze = waarde;
+  document.getElementById('dedLijstJa').classList.toggle('active', waarde);
+  document.getElementById('dedLijstNee').classList.toggle('active', !waarde);
+}
+
+async function bevestigDedicatedVerbruik(itemId){
+  const item = items.find(i => i.id === itemId);
+  const nieuweHoeveelheid = parseFloat(document.getElementById('dedResterend').value) || 0;
+  const { error } = await sb.from('items').update({ hoeveelheid: nieuweHoeveelheid }).eq('id', itemId);
+  if(error){ toast('Kon niet opslaan'); console.error(error); dedicatedResumeScan(); return; }
+  if(window._dedLijstKeuze && item.winkel_id){
+    await sb.from('boodschappenlijst').upsert(
+      { item_id: itemId, winkel_id: item.winkel_id },
+      { onConflict: 'item_id,winkel_id' }
+    );
+  }
+  await laadItems();
+  dedicatedResumeScan();
+}
+
+async function dedicatedMaakNieuwProduct(barcode){
+  const naam = document.getElementById('dedNieuwNaam').value.trim();
+  if(!naam){ toast('Vul een naam in'); return; }
+  const winkelId = document.getElementById('dedNieuwWinkel').value || null;
+  const hoeveelheid = parseFloat(document.getElementById('dedNieuwHoeveelheid').value) || 0;
+  const min = parseFloat(document.getElementById('dedNieuwMin').value) || 1;
+  const foto_url = document.getElementById('dedNieuwFoto').value || null;
+  const { error } = await sb.from('items').insert({
+    barcode, naam, hoeveelheid, min_voorraad: min, winkel_id: winkelId, foto_url
+  });
+  if(error){ toast('Kon product niet aanmaken'); console.error(error); dedicatedResumeScan(); return; }
+  toast('Product toegevoegd');
+  await laadItems();
+  dedicatedResumeScan();
+}
+
+function dedicatedResumeScan(){
+  document.getElementById('dedicatedResultArea').innerHTML = '';
+  if(dedicatedQr){ dedicatedQr.resume(); }
+}
+
 // ---------- init ----------
 (async function init(){
   await laadWinkels();
   await laadItems();
+  toepasApparaatModus();
 })();
 </script>
 </body>
