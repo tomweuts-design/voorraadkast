@@ -195,7 +195,7 @@
   <button class="about-btn" onclick="openAboutModal()">ℹ️</button>
   <button class="settings-btn" onclick="openInstellingenModal()">⚙️</button>
   <h1>Voorraadkast</h1>
-  <div class="sub">wat er in huis is, en waar het vandaan komt made by Tom Weuts -version 2.1.0-</div>
+  <div class="sub">wat er in huis is, en waar het vandaan komt made by Tom Weuts -version 2.3.0-</div>
   <nav class="tabs" id="mainTabs">
     <button data-tab="voorraad" class="active">Voorraad</button>
     <button data-tab="lijst">Boodschappen</button>
@@ -268,7 +268,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_IjmnfdHK8CyJ8i2-KQZ2HA_BDHRFWw5";
 // ====================================================================
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.3.0";
 
 let winkels = [];
 let items = [];
@@ -784,7 +784,7 @@ function openScanModal(){
   scanMode = "aanvullen";
   html5QrCode = new Html5Qrcode("reader");
   html5QrCode.start(
-    { facingMode: "environment" },
+    { facingMode: getInstellingen().camera },
     { fps: 10, qrbox: 220 },
     onScanSuccess,
     () => {}
@@ -806,6 +806,7 @@ function sluitScanModal(){
 }
 
 async function onScanSuccess(decodedText){
+  piep();
   if(html5QrCode){
     try{ await html5QrCode.pause(true); }catch(e){}
   }
@@ -910,9 +911,10 @@ function openBarcodeScanOverlay(targetInputId){
   window._miniScanTarget = targetInputId;
   window._miniQr = new Html5Qrcode("miniReader");
   window._miniQr.start(
-    { facingMode: "environment" },
+    { facingMode: getInstellingen().camera },
     { fps: 10, qrbox: 220 },
     (decodedText) => {
+      piep();
       const veld = document.getElementById(window._miniScanTarget);
       if(veld) veld.value = decodedText;
       sluitBarcodeScanOverlay();
@@ -1027,8 +1029,26 @@ function getInstellingen(){
     dedicated: localStorage.getItem('vk_dedicated') === 'true',
     timerMin: parseFloat(localStorage.getItem('vk_timer_min')) || 5,
     screensaver: localStorage.getItem('vk_screensaver') !== 'false',
-    screensaverMin: parseFloat(localStorage.getItem('vk_screensaver_min')) || 2
+    screensaverMin: parseFloat(localStorage.getItem('vk_screensaver_min')) || 2,
+    camera: localStorage.getItem('vk_camera') || 'environment',
+    geluid: localStorage.getItem('vk_geluid') !== 'false'
   };
+}
+
+function piep(){
+  const inst = getInstellingen();
+  if(!inst.geluid) return;
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.frequency.value = 880;
+    g.gain.setValueAtTime(0.15, ctx.currentTime);
+    o.start();
+    o.stop(ctx.currentTime + 0.12);
+    o.onended = () => ctx.close();
+  }catch(e){ console.warn('Kon geluid niet afspelen', e); }
 }
 
 function openInstellingenModal(){
@@ -1038,6 +1058,14 @@ function openInstellingenModal(){
       <div class="modal">
         <button class="modal-close" onclick="closeModal()">×</button>
         <h2>Instellingen (dit toestel)</h2>
+        <label>Camera</label>
+        <select id="instCamera">
+          <option value="environment" ${inst.camera==='environment'?'selected':''}>Achteraan</option>
+          <option value="user" ${inst.camera==='user'?'selected':''}>Vooraan</option>
+        </select>
+        <label style="display:flex; align-items:center; gap:8px; margin-top:14px;">
+          <input type="checkbox" id="instGeluid" ${inst.geluid ? 'checked' : ''}> Piepje bij scannen
+        </label>
         <label style="display:flex; align-items:center; gap:8px; margin-top:14px;">
           <input type="checkbox" id="instDedicated" ${inst.dedicated ? 'checked' : ''}> Dit is een dedicated toestel
         </label>
@@ -1059,10 +1087,14 @@ function bewaarInstellingen(){
   const timerMin = parseFloat(document.getElementById('instTimer').value) || 5;
   const screensaver = document.getElementById('instScreensaver').checked;
   const screensaverMin = parseFloat(document.getElementById('instScreensaverMin').value) || 2;
+  const camera = document.getElementById('instCamera').value;
+  const geluid = document.getElementById('instGeluid').checked;
   localStorage.setItem('vk_dedicated', dedicated ? 'true' : 'false');
   localStorage.setItem('vk_timer_min', timerMin);
   localStorage.setItem('vk_screensaver', screensaver ? 'true' : 'false');
   localStorage.setItem('vk_screensaver_min', screensaverMin);
+  localStorage.setItem('vk_camera', camera);
+  localStorage.setItem('vk_geluid', geluid ? 'true' : 'false');
   closeModal();
   toast('Instellingen opgeslagen (dit toestel)');
   toepasApparaatModus();
@@ -1158,7 +1190,7 @@ function startDedicatedCamera(){
   if(dedicatedQr) return;
   dedicatedQr = new Html5Qrcode("dedicatedReader");
   dedicatedQr.start(
-    { facingMode: "environment" },
+    { facingMode: getInstellingen().camera },
     { fps: 10, qrbox: 220 },
     onDedicatedScan,
     () => {}
@@ -1213,6 +1245,7 @@ function resetDedicatedTimer(){
 }
 
 async function onDedicatedScan(decodedText){
+  piep();
   meldActiviteit();
   if(dedicatedQr){ try{ await dedicatedQr.pause(true); }catch(e){} }
   const bestaand = items.find(i => i.barcode === decodedText);
