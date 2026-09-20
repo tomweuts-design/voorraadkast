@@ -178,6 +178,15 @@
     background:var(--bg-panel); border:1px solid var(--line); border-radius:10px;
     padding:14px; margin-top:12px; font-size:.88rem;
   }
+  #screensaverOverlay{
+    position:fixed; inset:0; background:#000; z-index:500;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #screensaverText{
+    position:absolute; color:#3a4a3f; font-family:'Fraunces', serif; font-size:1.4rem;
+    text-align:center; user-select:none; transition:top 1.5s ease, left 1.5s ease;
+  }
+  #screensaverText .tijd{ display:block; font-family:'IBM Plex Mono'; font-size:2.2rem; margin-top:6px; }
 </style>
 </head>
 <body>
@@ -186,7 +195,7 @@
   <button class="about-btn" onclick="openAboutModal()">ℹ️</button>
   <button class="settings-btn" onclick="openInstellingenModal()">⚙️</button>
   <h1>Voorraadkast</h1>
-  <div class="sub">wat er in huis is, en waar het vandaan komt made by Tom Weuts -version 2.0.0-</div>
+  <div class="sub">wat er in huis is, en waar het vandaan komt made by Tom Weuts -version 2.1.0-</div>
   <nav class="tabs" id="mainTabs">
     <button data-tab="voorraad" class="active">Voorraad</button>
     <button data-tab="lijst">Boodschappen</button>
@@ -225,7 +234,7 @@
     <ul class="plain" id="winkelsBeheerList" style="margin-top:18px;"></ul>
   </div>
 
-  <div id="tab-dedicated" style="display:none">
+  <div id="tab-dedicated" style="display:none" onclick="meldActiviteit()" oninput="meldActiviteit()">
     <div class="mode-toggle">
       <button id="dedModeVerbruik" class="active" onclick="zetDedicatedModus('verbruik')">Verbruik</button>
       <button id="dedModeAanvullen" onclick="zetDedicatedModus('aanvullen')">Aanvullen</button>
@@ -259,7 +268,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_IjmnfdHK8CyJ8i2-KQZ2HA_BDHRFWw5";
 // ====================================================================
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";
 
 let winkels = [];
 let items = [];
@@ -1016,7 +1025,9 @@ async function toonUpdateCheck(){
 function getInstellingen(){
   return {
     dedicated: localStorage.getItem('vk_dedicated') === 'true',
-    timerMin: parseFloat(localStorage.getItem('vk_timer_min')) || 5
+    timerMin: parseFloat(localStorage.getItem('vk_timer_min')) || 5,
+    screensaver: localStorage.getItem('vk_screensaver') !== 'false',
+    screensaverMin: parseFloat(localStorage.getItem('vk_screensaver_min')) || 2
   };
 }
 
@@ -1032,6 +1043,11 @@ function openInstellingenModal(){
         </label>
         <label>Timer (minuten) — tijd zonder scan voor de aanvul-modus terugvalt</label>
         <input id="instTimer" type="number" step="0.5" min="0.5" value="${inst.timerMin}">
+        <label style="display:flex; align-items:center; gap:8px; margin-top:14px;">
+          <input type="checkbox" id="instScreensaver" ${inst.screensaver ? 'checked' : ''}> Schermbeveiliging tegen inbranden (op het scanscherm)
+        </label>
+        <label>Inactiviteit (minuten) voor schermbeveiliging start</label>
+        <input id="instScreensaverMin" type="number" step="0.5" min="0.5" value="${inst.screensaverMin}">
         <button class="btn-primary" onclick="bewaarInstellingen()">Opslaan</button>
       </div>
     </div>
@@ -1041,8 +1057,12 @@ function openInstellingenModal(){
 function bewaarInstellingen(){
   const dedicated = document.getElementById('instDedicated').checked;
   const timerMin = parseFloat(document.getElementById('instTimer').value) || 5;
+  const screensaver = document.getElementById('instScreensaver').checked;
+  const screensaverMin = parseFloat(document.getElementById('instScreensaverMin').value) || 2;
   localStorage.setItem('vk_dedicated', dedicated ? 'true' : 'false');
   localStorage.setItem('vk_timer_min', timerMin);
+  localStorage.setItem('vk_screensaver', screensaver ? 'true' : 'false');
+  localStorage.setItem('vk_screensaver_min', screensaverMin);
   closeModal();
   toast('Instellingen opgeslagen (dit toestel)');
   toepasApparaatModus();
@@ -1134,6 +1154,7 @@ let dedicatedWinkelId = null;
 let dedicatedTimerHandle = null;
 
 function startDedicatedCamera(){
+  meldActiviteit();
   if(dedicatedQr) return;
   dedicatedQr = new Html5Qrcode("dedicatedReader");
   dedicatedQr.start(
@@ -1152,6 +1173,8 @@ function stopDedicatedCamera(){
     dedicatedQr = null;
   }
   if(dedicatedTimerHandle) clearTimeout(dedicatedTimerHandle);
+  if(screensaverTimer) clearTimeout(screensaverTimer);
+  verbergScreensaver();
 }
 
 function zetDedicatedModus(modus){
@@ -1190,6 +1213,7 @@ function resetDedicatedTimer(){
 }
 
 async function onDedicatedScan(decodedText){
+  meldActiviteit();
   if(dedicatedQr){ try{ await dedicatedQr.pause(true); }catch(e){} }
   const bestaand = items.find(i => i.barcode === decodedText);
   const resultArea = document.getElementById('dedicatedResultArea');
@@ -1286,6 +1310,56 @@ async function dedicatedMaakNieuwProduct(barcode){
 function dedicatedResumeScan(){
   document.getElementById('dedicatedResultArea').innerHTML = '';
   if(dedicatedQr){ dedicatedQr.resume(); }
+}
+
+// ---------- schermbeveiliging tegen inbranden (dedicated toestel) ----------
+let screensaverTimer = null;
+let screensaverActief = false;
+let screensaverMoveInterval = null;
+
+function meldActiviteit(){
+  if(screensaverActief) verbergScreensaver();
+  const inst = getInstellingen();
+  if(screensaverTimer) clearTimeout(screensaverTimer);
+  if(inst.screensaver && inst.dedicated){
+    screensaverTimer = setTimeout(toonScreensaver, inst.screensaverMin * 60000);
+  }
+}
+
+function toonScreensaver(){
+  if(document.getElementById('tab-dedicated').style.display === 'none') return;
+  screensaverActief = true;
+  if(dedicatedQr){ try{ dedicatedQr.pause(true); }catch(e){} }
+  const overlay = document.createElement('div');
+  overlay.id = 'screensaverOverlay';
+  overlay.onclick = meldActiviteit;
+  overlay.innerHTML = `<div id="screensaverText">Voorraadkast<span class="tijd" id="screensaverKlok"></span></div>`;
+  document.body.appendChild(overlay);
+  verplaatsScreensaver();
+  updateScreensaverKlok();
+  screensaverMoveInterval = setInterval(() => { verplaatsScreensaver(); updateScreensaverKlok(); }, 15000);
+}
+
+function verplaatsScreensaver(){
+  const el = document.getElementById('screensaverText');
+  if(!el) return;
+  const maxTop = window.innerHeight - 100;
+  const maxLeft = window.innerWidth - 160;
+  el.style.top = Math.max(20, Math.random() * maxTop) + 'px';
+  el.style.left = Math.max(20, Math.random() * maxLeft) + 'px';
+}
+
+function updateScreensaverKlok(){
+  const klok = document.getElementById('screensaverKlok');
+  if(klok) klok.textContent = new Date().toLocaleTimeString('nl-BE', { hour:'2-digit', minute:'2-digit' });
+}
+
+function verbergScreensaver(){
+  screensaverActief = false;
+  if(screensaverMoveInterval) clearInterval(screensaverMoveInterval);
+  const overlay = document.getElementById('screensaverOverlay');
+  if(overlay) overlay.remove();
+  if(dedicatedQr){ try{ dedicatedQr.resume(); }catch(e){} }
 }
 
 // ---------- init ----------
