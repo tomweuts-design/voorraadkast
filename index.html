@@ -195,7 +195,7 @@
   <button class="about-btn" onclick="openAboutModal()">ℹ️</button>
   <button class="settings-btn" onclick="openInstellingenModal()">⚙️</button>
   <h1>Voorraadkast</h1>
-  <div class="sub">wat er in huis is, en waar het vandaan komt made by Tom Weuts -version 2.3.0-</div>
+  <div class="sub">wat er in huis is, en waar het vandaan komt made by Tom Weuts -version 2.4.0-</div>
   <nav class="tabs" id="mainTabs">
     <button data-tab="voorraad" class="active">Voorraad</button>
     <button data-tab="lijst">Boodschappen</button>
@@ -268,7 +268,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_IjmnfdHK8CyJ8i2-KQZ2HA_BDHRFWw5";
 // ====================================================================
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const APP_VERSION = "2.3.0";
+const APP_VERSION = "2.4.0";
 
 let winkels = [];
 let items = [];
@@ -1184,6 +1184,9 @@ let dedicatedQr = null;
 let dedicatedModus = 'verbruik'; // of 'aanvullen'
 let dedicatedWinkelId = null;
 let dedicatedTimerHandle = null;
+let dedicatedLastCode = null;
+let dedicatedLastTime = 0;
+let dedicatedMeldingTimer = null;
 
 function startDedicatedCamera(){
   meldActiviteit();
@@ -1205,6 +1208,7 @@ function stopDedicatedCamera(){
     dedicatedQr = null;
   }
   if(dedicatedTimerHandle) clearTimeout(dedicatedTimerHandle);
+  if(dedicatedMeldingTimer) clearTimeout(dedicatedMeldingTimer);
   if(screensaverTimer) clearTimeout(screensaverTimer);
   verbergScreensaver();
 }
@@ -1245,9 +1249,16 @@ function resetDedicatedTimer(){
 }
 
 async function onDedicatedScan(decodedText){
+  // dubbele scan van dezelfde code binnen 3s negeren (camera blijft continu actief)
+  const nu = Date.now();
+  if(decodedText === dedicatedLastCode && (nu - dedicatedLastTime) < 3000) return;
+  dedicatedLastCode = decodedText;
+  dedicatedLastTime = nu;
+
   piep();
   meldActiviteit();
-  if(dedicatedQr){ try{ await dedicatedQr.pause(true); }catch(e){} }
+  if(dedicatedMeldingTimer) clearTimeout(dedicatedMeldingTimer);
+
   const bestaand = items.find(i => i.barcode === decodedText);
   const resultArea = document.getElementById('dedicatedResultArea');
 
@@ -1279,28 +1290,52 @@ async function onDedicatedScan(decodedText){
     toast(`+1 ${bestaand.naam} (${nieuweHoeveelheid})`);
     resetDedicatedTimer();
     await laadItems();
-    dedicatedResumeScan();
-  } else {
-    const voorstel = Math.max(0, bestaand.hoeveelheid - 1);
-    const voorselecteerJa = bestaand.min_voorraad > 0 && voorstel <= bestaand.min_voorraad;
-    resultArea.innerHTML = `
-      <div class="scan-result">
-        <img class="foto-preview" src="${bestaand.foto_url || ''}" onerror="this.style.display='none'">
-        <div class="item-name">${bestaand.naam}</div>
-        <label>Hoeveel zijn er nog?</label>
-        <div style="display:flex; gap:8px;">
-          <input id="dedResterend" type="number" value="${voorstel}" style="flex:1">
-          <button type="button" class="btn-secondary" style="width:auto; margin:0; padding:9px 14px;" onclick="document.getElementById('dedResterend').value=0">= op</button>
-        </div>
-        <label>Op boodschappenlijst zetten?</label>
-        <div class="mode-toggle">
-          <button id="dedLijstJa" class="${voorselecteerJa ? 'active' : ''}" onclick="dedZetLijstKeuze(true)">Ja</button>
-          <button id="dedLijstNee" class="${voorselecteerJa ? '' : 'active'}" onclick="dedZetLijstKeuze(false)">Nee</button>
-        </div>
-        <button class="btn-primary" onclick="bevestigDedicatedVerbruik('${bestaand.id}')">Bevestigen</button>
-      </div>`;
-    window._dedLijstKeuze = voorselecteerJa;
+    return;
   }
+
+  // verbruik-modus: meteen toepassen, met een korte correctiemelding erna
+  const nieuweHoeveelheid = Math.max(0, bestaand.hoeveelheid - 1);
+  const voorselecteerJa = bestaand.min_voorraad > 0 && nieuweHoeveelheid <= bestaand.min_voorraad;
+
+  const { error } = await sb.from('items').update({ hoeveelheid: nieuweHoeveelheid }).eq('id', bestaand.id);
+  if(error){ console.error(error); return; }
+  if(voorselecteerJa && bestaand.winkel_id){
+    await sb.from('boodschappenlijst').upsert(
+      { item_id: bestaand.id, winkel_id: bestaand.winkel_id },
+      { onConflict: 'item_id,winkel_id' }
+    );
+  }
+  await laadItems();
+
+  resultArea.innerHTML = `
+    <div class="scan-result">
+      <div class="item-name">${bestaand.naam}</div>
+      <div class="item-meta">nog ${nieuweHoeveelheid}${voorselecteerJa ? ' — op boodschappenlijst gezet' : ''}</div>
+      <button class="btn-secondary" onclick="dedicatedOpenCorrigeer('${bestaand.id}', ${nieuweHoeveelheid}, ${voorselecteerJa})">aanpassen</button>
+    </div>`;
+  dedicatedMeldingTimer = setTimeout(() => { resultArea.innerHTML = ''; }, 5000);
+}
+
+function dedicatedOpenCorrigeer(itemId, huidigeHoeveelheid, huidigeLijstKeuze){
+  if(dedicatedMeldingTimer) clearTimeout(dedicatedMeldingTimer);
+  const item = items.find(i => i.id === itemId);
+  document.getElementById('dedicatedResultArea').innerHTML = `
+    <div class="scan-result">
+      <img class="foto-preview" src="${item.foto_url || ''}" onerror="this.style.display='none'">
+      <div class="item-name">${item.naam}</div>
+      <label>Hoeveel zijn er nog?</label>
+      <div style="display:flex; gap:8px;">
+        <input id="dedResterend" type="number" value="${huidigeHoeveelheid}" style="flex:1">
+        <button type="button" class="btn-secondary" style="width:auto; margin:0; padding:9px 14px;" onclick="document.getElementById('dedResterend').value=0">= op</button>
+      </div>
+      <label>Op boodschappenlijst zetten?</label>
+      <div class="mode-toggle">
+        <button id="dedLijstJa" class="${huidigeLijstKeuze ? 'active' : ''}" onclick="dedZetLijstKeuze(true)">Ja</button>
+        <button id="dedLijstNee" class="${huidigeLijstKeuze ? '' : 'active'}" onclick="dedZetLijstKeuze(false)">Nee</button>
+      </div>
+      <button class="btn-primary" onclick="bevestigDedicatedVerbruik('${itemId}')">Bevestigen</button>
+    </div>`;
+  window._dedLijstKeuze = huidigeLijstKeuze;
 }
 
 function dedZetLijstKeuze(waarde){
@@ -1313,15 +1348,19 @@ async function bevestigDedicatedVerbruik(itemId){
   const item = items.find(i => i.id === itemId);
   const nieuweHoeveelheid = parseFloat(document.getElementById('dedResterend').value) || 0;
   const { error } = await sb.from('items').update({ hoeveelheid: nieuweHoeveelheid }).eq('id', itemId);
-  if(error){ toast('Kon niet opslaan'); console.error(error); dedicatedResumeScan(); return; }
-  if(window._dedLijstKeuze && item.winkel_id){
-    await sb.from('boodschappenlijst').upsert(
-      { item_id: itemId, winkel_id: item.winkel_id },
-      { onConflict: 'item_id,winkel_id' }
-    );
+  if(error){ toast('Kon niet opslaan'); console.error(error); return; }
+  if(item.winkel_id){
+    if(window._dedLijstKeuze){
+      await sb.from('boodschappenlijst').upsert(
+        { item_id: itemId, winkel_id: item.winkel_id },
+        { onConflict: 'item_id,winkel_id' }
+      );
+    } else {
+      await sb.from('boodschappenlijst').delete().eq('item_id', itemId).eq('winkel_id', item.winkel_id);
+    }
   }
+  document.getElementById('dedicatedResultArea').innerHTML = '';
   await laadItems();
-  dedicatedResumeScan();
 }
 
 async function dedicatedMaakNieuwProduct(barcode){
@@ -1334,15 +1373,10 @@ async function dedicatedMaakNieuwProduct(barcode){
   const { error } = await sb.from('items').insert({
     barcode, naam, hoeveelheid, min_voorraad: min, winkel_id: winkelId, foto_url
   });
-  if(error){ toast('Kon product niet aanmaken'); console.error(error); dedicatedResumeScan(); return; }
+  if(error){ toast('Kon product niet aanmaken'); console.error(error); return; }
   toast('Product toegevoegd');
-  await laadItems();
-  dedicatedResumeScan();
-}
-
-function dedicatedResumeScan(){
   document.getElementById('dedicatedResultArea').innerHTML = '';
-  if(dedicatedQr){ dedicatedQr.resume(); }
+  await laadItems();
 }
 
 // ---------- schermbeveiliging tegen inbranden (dedicated toestel) ----------
